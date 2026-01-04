@@ -24,10 +24,6 @@ export interface PlayerState {
   // 狀態標誌
   isGhost: boolean;
   isImmobilized: boolean;
-  
-  // 新增：自動進食配置
-  autoConsumeEnabled: boolean;
-  autoConsumeThreshold: number;    // 體力百分比閾值（預設 50%）
 }
 
 export interface PlayerActions {
@@ -53,9 +49,6 @@ export interface PlayerActions {
   
   // 新增：背包擴容
   expandCapacity: (units: number) => { success: boolean; cost: number; newCapacity: number };
-  
-  // 新增：自動進食管理
-  setAutoConsume: (enabled: boolean, threshold?: number) => void;
   
   // 新增：緊急維修（零容忍崩塌後）
   emergencyRepair: (cost: number) => boolean;

@@ -2,16 +2,20 @@
  * DurabilityBar 組件
  * 顯示背包耐久度，工業風格設計
  * Solefood MVP v8.7
+ * 
+ * 強調「耐久度意識」：當背包滿且會話活躍時，顯示警告動畫
  */
 
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 
 interface DurabilityBarProps {
   value: number;  // 當前耐久度（0-100）
+  isFull?: boolean;  // 背包是否已滿（用於觸發警告動畫）
+  isActive?: boolean; // 會話是否活躍（用於觸發警告動畫）
 }
 
-export const DurabilityBar: React.FC<DurabilityBarProps> = ({ value }) => {
+export const DurabilityBar: React.FC<DurabilityBarProps> = ({ value, isFull = false, isActive = false }) => {
   const percentage = Math.max(0, Math.min(100, value));
 
   // 根據耐久度決定顏色
@@ -23,6 +27,35 @@ export const DurabilityBar: React.FC<DurabilityBarProps> = ({ value }) => {
 
   const barColor = getColor();
   const isBroken = percentage === 0;
+  
+  // 警告動畫：當背包滿且會話活躍時，顯示脈衝動畫
+  const warningAnimation = useRef(new Animated.Value(1)).current;
+  const shouldWarn = isFull && isActive && !isBroken;
+  
+  useEffect(() => {
+    if (shouldWarn) {
+      // 脈衝動畫：1.0 → 1.1 → 1.0，持續循環
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(warningAnimation, {
+            toValue: 1.1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(warningAnimation, {
+            toValue: 1.0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    } else {
+      // 停止動畫並重置
+      warningAnimation.setValue(1);
+    }
+  }, [shouldWarn, warningAnimation]);
 
   return (
     <View style={styles.container}>
@@ -31,9 +64,23 @@ export const DurabilityBar: React.FC<DurabilityBarProps> = ({ value }) => {
         <Text style={[styles.value, isBroken && styles.brokenText]}>
           {isBroken ? 'BROKEN' : `${Math.round(value)}%`}
         </Text>
+        {shouldWarn && (
+          <Text style={styles.warningLabel}>⚠️ 磨損中</Text>
+        )}
       </View>
-      <View style={styles.barContainer}>
-        <View style={[styles.barBackground, isBroken && styles.brokenBackground]}>
+      <Animated.View 
+        style={[
+          styles.barContainer,
+          shouldWarn && {
+            transform: [{ scale: warningAnimation }],
+          },
+        ]}
+      >
+        <View style={[
+          styles.barBackground, 
+          isBroken && styles.brokenBackground,
+          shouldWarn && styles.warningBackground,
+        ]}>
           {!isBroken && (
             <View
               style={[
@@ -52,7 +99,7 @@ export const DurabilityBar: React.FC<DurabilityBarProps> = ({ value }) => {
             </View>
           )}
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 };
@@ -103,6 +150,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#424242',
     borderColor: '#F44336',
     borderWidth: 2,
+  },
+  warningBackground: {
+    // 警告狀態：橙色邊框，表示正在磨損
+    borderColor: '#FF9800',
+    borderWidth: 2,
+    shadowColor: '#FF9800',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  warningLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FF9800',
+    marginLeft: 8,
   },
   barFill: {
     height: '100%',

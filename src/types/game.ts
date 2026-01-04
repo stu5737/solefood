@@ -109,11 +109,10 @@ export interface PickupInterception {
 }
 
 /**
- * 自動進食配置
+ * 自動進食配置（已棄用）
+ * 
+ * @deprecated Auto-Consume Protocol has been deprecated in v8.7.
+ * The "Zero-Sum" movement logic already balances physical strain through Durability decay.
+ * Items in the bag remain safe; only overflow items (picked up when bag is full) are immediately consumed.
  */
-export interface AutoConsumeConfig {
-  enabled: boolean;                 // 是否啟用
-  threshold: number;                // 觸發閾值（體力百分比）
-  priority: ItemTier[];             // 優先順序（T1 > T2）
-}
 

@@ -28,6 +28,7 @@ export default function GameScreen() {
   // 從 Store 獲取狀態
   const playerState = usePlayerStore();
   const sessionState = useSessionStore();
+  const inventoryState = useInventoryStore();
   
   // ========== 應用啟動時恢復待救援物品 ==========
   useEffect(() => {
@@ -909,6 +910,9 @@ export default function GameScreen() {
             maxValue={playerState.maxStamina}
           />
           <DurabilityBar
+            value={playerState.durability}
+            isFull={inventoryState.totalWeight >= playerState.getEffectiveMaxWeight()}
+            isActive={sessionState.totalDistance > 0}
             value={playerState.durability}
           />
         </View>

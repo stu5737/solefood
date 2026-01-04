@@ -16,7 +16,6 @@ export const STAMINA = {
   BURN_PER_100M: 1,         // 每 100 公尺消耗 1 點
   MAX_STAMINA: 100,         // 最大體力值
   MIN_STAMINA: 0,           // 最小體力值
-  AUTO_CONSUME_THRESHOLD: 50, // 自動進食觸發閾值 (50%)
   AD_RESTORE: 30,           // 廣告恢復體力值
 } as const;
 
