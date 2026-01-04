@@ -21,6 +21,7 @@ import { useSessionStore } from '../../src/stores/sessionStore';
 import { useInventoryStore } from '../../src/stores/inventoryStore';
 import { entropyEngine } from '../../src/core/entropy/engine';
 import { executeUnloadSettlement, calculateSettlement } from '../../src/core/game/unloading';
+import { calculateContamination } from '../../src/core/math/maintenance';
 import type { EntropyEvent, LootResult } from '../../src/core/entropy/events';
 
 export default function GameScreen() {
@@ -54,6 +55,92 @@ export default function GameScreen() {
         '衛生值過低',
         '您的背包衛生值過低，收益將受到影響。建議進行清潔。',
         [{ text: '確定' }]
+      );
+    };
+
+    // T3 廣告救援事件（空間夠但體力不足）
+    const handleLootRescueAvailable = (event: EntropyEvent) => {
+      const lootData = event.data as LootResult;
+      const { item, itemValue, pickupCost, currentStamina, requiredStamina } = lootData;
+      
+      if (!item || item.tier !== 3) {
+        console.error('[GameScreen] T3 rescue event missing required data');
+        return;
+      }
+      
+      const playerStore = usePlayerStore.getState();
+      const sessionStore = useSessionStore.getState();
+      
+      // 顯示廣告救援模態框
+      Alert.alert(
+        '💎 Found T3 Royal Sugar!',
+        `You found a T3 item ($${itemValue} SOLE) but are too exhausted to lift it!\n\n` +
+        `Current Stamina: ${currentStamina}/${requiredStamina}\n\n` +
+        `Watch an Ad to inject Adrenaline (+30 Stamina) and pick it up?`,
+        [
+          {
+            text: 'Give Up (Item Lost)',
+            style: 'cancel',
+            onPress: () => {
+              console.log('[GameScreen] User gave up T3 item');
+            },
+          },
+          {
+            text: '📺 Watch Ad',
+            onPress: async () => {
+              // 檢查廣告上限
+              const canWatchAd = sessionStore.triggerRescue('stamina');
+              
+              if (!canWatchAd) {
+                Alert.alert(
+                  'Ad Limit Reached',
+                  'You have reached the daily limit for adrenaline ads. Please try again tomorrow.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              
+              // 模擬觀看廣告（1 秒延遲）
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              
+              // 恢復體力（+30 點）
+              playerStore.updateStamina(30);
+              
+              // 檢查現在是否有足夠體力拾取
+              const newStamina = playerStore.stamina;
+              if (newStamina >= pickupCost!) {
+                // 嘗試拾取物品
+                const inventoryStore = useInventoryStore.getState();
+                const success = inventoryStore.addItem(item);
+                
+                if (success) {
+                  // 記錄衛生值債務
+                  const sessionStore = useSessionStore.getState();
+                  const contamination = calculateContamination(3);
+                  sessionStore.addHygieneDebt(contamination);
+                  
+                  Alert.alert(
+                    'Success!',
+                    `Adrenaline injected! Picked up T3 Royal Sugar ($${itemValue} SOLE)!`,
+                    [{ text: 'OK' }]
+                  );
+                } else {
+                  Alert.alert(
+                    'Error',
+                    'Failed to pick up item after watching ad. Please try again.',
+                    [{ text: 'OK' }]
+                  );
+                }
+              } else {
+                Alert.alert(
+                  'Still Not Enough',
+                  `You need ${pickupCost} Stamina but only have ${newStamina}. The item is lost.`,
+                  [{ text: 'OK' }]
+                );
+              }
+            },
+          },
+        ]
       );
     };
 
@@ -227,6 +314,7 @@ export default function GameScreen() {
     entropyEngine.on('stamina_depleted', handleStaminaDepleted);
     entropyEngine.on('durability_zero', handleDurabilityZero);
     entropyEngine.on('hygiene_low', handleHygieneLow);
+    entropyEngine.on('loot_rescue_available', handleLootRescueAvailable);
     entropyEngine.on('loot_intercept', handleLootIntercept);
     entropyEngine.on('loot_converted', handleLootConverted);
 
@@ -235,6 +323,7 @@ export default function GameScreen() {
       entropyEngine.off('stamina_depleted', handleStaminaDepleted);
       entropyEngine.off('durability_zero', handleDurabilityZero);
       entropyEngine.off('hygiene_low', handleHygieneLow);
+      entropyEngine.off('loot_rescue_available', handleLootRescueAvailable);
       entropyEngine.off('loot_intercept', handleLootIntercept);
       entropyEngine.off('loot_converted', handleLootConverted);
     };
@@ -396,6 +485,24 @@ export default function GameScreen() {
       `已將耐久度設為 0。\n\n檢查 Immobilized 狀態是否啟用。`,
       [{ text: 'OK' }]
     );
+  };
+
+  // ========== Lab: Force Encounters ==========
+  // 強制拾取調試功能（用於驗證數學邏輯）
+  const handleForceLoot = (tier: 1 | 2 | 3) => {
+    try {
+      entropyEngine.processMovement({
+        distance: 0.1, // 100m = 0.1km
+        speed: 5.0,     // 5 km/h (步行速度)
+        timestamp: Date.now(),
+        forceLootTier: tier, // 強制生成指定階層的物品
+      });
+      
+      const tierName = tier === 1 ? 'T1' : tier === 2 ? 'T2' : 'T3';
+      console.log(`[Lab] Force Loot: Walked 100m and found ${tierName} item`);
+    } catch (error) {
+      Alert.alert('錯誤', `強制拾取失敗: ${error}`);
+    }
   };
 
   // 卸貨結算功能
@@ -586,6 +693,39 @@ export default function GameScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* ========== 🔬 Lab: Force Encounters (100m) ========== */}
+        <View style={styles.debugSection}>
+          <Text style={styles.zoneTitle}>🔬 Lab: Force Encounters (100m)</Text>
+          <Text style={styles.zoneSubtitle}>強制生成指定物品，驗證數學邏輯（特別是零和邏輯）</Text>
+
+          <TouchableOpacity
+            style={[styles.button, styles.buttonLab]}
+            onPress={() => handleForceLoot(1)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>🧪 Walk + T1</Text>
+            <Text style={styles.buttonSubtext}>步行 100m + 強制 T1（驗證零和：-2 Move -3 Work +5 Food = 0）</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.buttonLab]}
+            onPress={() => handleForceLoot(2)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>🧪 Walk + T2</Text>
+            <Text style={styles.buttonSubtext}>步行 100m + 強制 T2（驗證：-2 Move -9 Work +15 Food = +4）</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.buttonLab]}
+            onPress={() => handleForceLoot(3)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>🧪 Walk + T3</Text>
+            <Text style={styles.buttonSubtext}>步行 100m + 強制 T3（驗證：-2 Move -30 Work +100 Food = +68）</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* 狀態信息面板 */}
         <View style={styles.infoSection}>
           <Text style={styles.infoTitle}>當前狀態</Text>
@@ -725,6 +865,9 @@ const styles = StyleSheet.create({
   },
   buttonCollapse: {
     backgroundColor: '#795548',
+  },
+  buttonLab: {
+    backgroundColor: '#9C27B0',
   },
   buttonText: {
     fontSize: 16,

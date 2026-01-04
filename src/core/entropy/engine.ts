@@ -144,8 +144,10 @@ class EntropyEngine {
       this.pendingDistance -= LOOT_TRIGGER_DISTANCE;
       lootEventsCount++;
 
-      // 觸發 RNG 拾取邏輯，並累積體力變化（Step B: Loot Loop）
-      const lootStaminaChange = this.processLootEvent(currentTime);
+      // 觸發拾取邏輯，並累積體力變化（Step B: Loot Loop）
+      // 如果指定了 forceLootTier，強制生成該階層的物品（調試用）
+      const forceTier = input.forceLootTier;
+      const lootStaminaChange = this.processLootEvent(currentTime, forceTier);
       totalLootStaminaChange += lootStaminaChange;
       
       // 累積拾取事件的體力變化
@@ -298,9 +300,10 @@ class EntropyEngine {
    * - 這確保了「安全旅程」：移動過程中衛生值保持 100%
    * 
    * @param timestamp - 當前時間戳
+   * @param forceTier - 調試用：強制生成指定階層的物品（可選）
    * @returns 體力變化值（正數為增加，負數為減少）
    */
-  private processLootEvent(timestamp: number): number {
+  private processLootEvent(timestamp: number, forceTier?: 1 | 2 | 3): number {
     const playerState = usePlayerStore.getState();
     const inventoryStore = useInventoryStore.getState();
 
@@ -318,8 +321,10 @@ class EntropyEngine {
       return 0; // 無體力變化
     }
 
-    // 1. RNG 決定物品階層（85/14/1 分布）
-    const tier = this.rollItemTier();
+    // 1. 決定物品階層
+    // 如果指定了 forceTier（調試用），強制使用該階層
+    // 否則使用 RNG（85/14/1 分布）
+    const tier = forceTier !== undefined ? forceTier : this.rollItemTier();
 
     // 2. 創建物品對象
     const item: Item = {
@@ -386,10 +391,13 @@ class EntropyEngine {
     } else {
       // 5. 拾取失敗（超載或體力不足）
       // 檢查具體原因（此時已經通過了 Ghost Mode 和 Immobilized 檢查）
+      // 重要：優先級順序 - 先檢查空間，再檢查體力
       const currentPlayerState = usePlayerStore.getState();
       const currentInventoryState = useInventoryStore.getState();
       
-      // 檢查重量超載
+      // Step 1: 檢查空間（優先級 #1）
+      // 如果背包滿了，強制轉換溢出（Universal Overflow）
+      // 物理法則：沒有空間就無法持有，廣告也無法解決重力/體積問題
       const wouldExceedWeight = currentInventoryState.totalWeight + item.weight > currentPlayerState.maxWeight;
       
       if (wouldExceedWeight) {
@@ -431,18 +439,41 @@ class EntropyEngine {
         // 返回淨體力變化（不直接應用）
         return netAmount;
       }
-      // 檢查體力不足
+      // Step 2: 檢查體力（優先級 #2）
+      // 如果空間夠但體力不足，觸發廣告救援（特別是 T3）
       else if (currentPlayerState.stamina < item.pickupCost) {
-        this.emitEvent({
-          type: 'loot_intercept',
-          data: {
-            tier,
-            success: false,
-            reason: 'insufficient_stamina',
-            itemId: item.id,
-          } as LootResult,
-          timestamp,
-        });
+        // 特殊處理：T3 物品且體力不足時，提供廣告救援機會
+        if (tier === 3) {
+          // 發射 T3 救援可用事件
+          // UI 將顯示廣告救援模態框
+          this.emitEvent({
+            type: 'loot_rescue_available',
+            data: {
+              tier: 3,
+              success: false,
+              reason: 't3_rescue_available',
+              item: item,  // 完整的物品對象
+              itemId: item.id,
+              itemValue: item.value,
+              pickupCost: item.pickupCost,
+              currentStamina: currentPlayerState.stamina,
+              requiredStamina: item.pickupCost,
+            } as LootResult,
+            timestamp,
+          });
+        } else {
+          // T1/T2 體力不足：發射普通攔截事件
+          this.emitEvent({
+            type: 'loot_intercept',
+            data: {
+              tier,
+              success: false,
+              reason: 'insufficient_stamina',
+              itemId: item.id,
+            } as LootResult,
+            timestamp,
+          });
+        }
         return 0; // 無體力變化
       }
       // 這不應該發生（因為開頭已經檢查過），但為了安全起見

@@ -14,6 +14,7 @@ export interface MovementInput {
   distance: number;    // 移動距離（公里）
   speed: number;       // 移動速度（km/h）
   timestamp: number;   // 時間戳（毫秒）
+  forceLootTier?: 1 | 2 | 3; // 調試用：強制生成指定階層的物品（可選）
 }
 
 /**
@@ -39,7 +40,8 @@ export type EntropyEventType =
   | 'loot_success'         // 拾取成功
   | 'loot_failed'          // 拾取失敗（超載或體力不足）
   | 'loot_intercept'       // 拾取攔截（用於救援機制）
-  | 'loot_converted';      // 拾取轉換（背包滿時自動消耗恢復體力）
+  | 'loot_converted'       // 拾取轉換（背包滿時自動消耗恢復體力）
+  | 'loot_rescue_available'; // 拾取救援可用（T3 體力不足，可看廣告）
 
 /**
  * 拾取結果
@@ -47,7 +49,7 @@ export type EntropyEventType =
 export interface LootResult {
   tier: 1 | 2 | 3;
   success: boolean;
-  reason?: 'overload' | 'insufficient_stamina' | 'ghost_mode' | 'immobilized' | 'OVERLOAD_SOLVABLE' | 'OVERLOAD_IMPOSSIBLE';
+  reason?: 'overload' | 'insufficient_stamina' | 'ghost_mode' | 'immobilized' | 'OVERLOAD_SOLVABLE' | 'OVERLOAD_IMPOSSIBLE' | 't3_rescue_available';
   itemId?: string;
   // 智能超載交換相關字段
   item?: Item;  // 等待拾取的物品
