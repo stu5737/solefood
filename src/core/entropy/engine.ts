@@ -442,46 +442,46 @@ class EntropyEngine {
         return netAmount;
       }
       // Step 2: 檢查體力（優先級 #2）
-      // 如果空間夠但體力不足，觸發廣告救援（特別是 T3）
+      // 如果空間夠但體力不足，觸發廣告救援（通用型，支援所有階層）
       else if (currentPlayerState.stamina < item.pickupCost) {
-        // 特殊處理：T3 物品且體力不足時，提供廣告救援機會
-        if (tier === 3) {
-          // 調試日誌：匹配用戶提供的邏輯流程
-          console.log(`[T3 Rescue] Step 2: 發現 T3 物品！體力不足 (${currentPlayerState.stamina} < ${item.pickupCost})`);
-          
-          // 發射 T3 救援可用事件
-          // UI 將顯示廣告救援模態框
-          this.emitEvent({
-            type: 'loot_rescue_available',
-            data: {
-              tier: 3,
-              success: false,
-              reason: 't3_rescue_available',
-              item: item,  // 完整的物品對象
-              itemId: item.id,
-              itemValue: item.value,
-              pickupCost: item.pickupCost,
-              currentStamina: currentPlayerState.stamina,
-              requiredStamina: item.pickupCost,
-            } as LootResult,
-            timestamp,
-          });
-        } else {
-          // T1/T2 體力不足：發射普通攔截事件
-          this.emitEvent({
-            type: 'loot_intercept',
-            data: {
-              tier,
-              success: false,
-              reason: 'insufficient_stamina',
-              itemId: item.id,
-            } as LootResult,
-            timestamp,
-          });
-        }
-        return 0; // 無體力變化
+        // 通用處理：任何階層的物品（T1/T2/T3）體力不足時，都提供廣告救援機會
+        // 這確保了「付出與回報」的公平性：無論救援什麼物品，30秒的廣告時間都應該受到保護
+        
+        // 調試日誌：匹配用戶提供的邏輯流程
+        console.log(`[Ad Rescue] Step 2: 發現 T${tier} 物品！體力不足 (${currentPlayerState.stamina} < ${item.pickupCost})`);
+        
+        // 立即保存待救援物品到持久化存儲（鎖定現場）
+        // 這確保即使應用崩潰，玩家的廣告時間投資也不會丟失
+        const sessionStore = useSessionStore.getState();
+        sessionStore.setPendingEncounter(item);
+        
+        // 發射救援可用事件（通用型，不限制於 T3）
+        // UI 將顯示廣告救援模態框
+        this.emitEvent({
+          type: 'loot_rescue_available',
+          data: {
+            tier,
+            success: false,
+            reason: 'ad_rescue_available', // 通用救援原因，不限制於 T3
+            item: item,  // 完整的物品對象
+            itemId: item.id,
+            itemValue: item.value,
+            pickupCost: item.pickupCost,
+            currentStamina: currentPlayerState.stamina,
+            requiredStamina: item.pickupCost,
+          } as LootResult,
+          timestamp,
+        });
+      } else {
+        // 體力足夠：正常拾取（不應該到達這裡，因為 canPickup 已經檢查過）
+        // 但為了完整性，我們仍然處理這個分支
+        // 注意：這個分支實際上不會被執行，因為 canPickup 已經驗證了體力
+        console.warn(`[EntropyEngine] Unexpected branch: Stamina sufficient but item not picked up`);
       }
-      // 這不應該發生（因為開頭已經檢查過），但為了安全起見
+      
+      // 返回 0（無體力變化），因為物品尚未被拾取
+      // 體力變化將在廣告救援成功後由 UI 層處理
+      return 0;
       else if (currentPlayerState.isGhost) {
         this.emitEvent({
           type: 'loot_intercept',

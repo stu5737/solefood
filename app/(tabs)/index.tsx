@@ -28,6 +28,58 @@ export default function GameScreen() {
   // 從 Store 獲取狀態
   const playerState = usePlayerStore();
   const sessionState = useSessionStore();
+  
+  // ========== 應用啟動時恢復待救援物品 ==========
+  useEffect(() => {
+    // 檢查是否有待救援的物品（通用型，支援所有階層）
+    const currentEncounter = sessionState.currentEncounter;
+    
+    if (currentEncounter && currentEncounter.status === 'PENDING_AD') {
+      const item = currentEncounter.item;
+      const itemValue = item.value;
+      const pickupCost = item.pickupCost;
+      
+      // 顯示恢復提示
+      Alert.alert(
+        '⚠️ Recovery Mode',
+        `You were trying to rescue a **T${item.tier}** item ($${itemValue} SOLE) before the app closed.\n\n` +
+        `Resume the ad rescue?`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => {
+              // 清除待救援狀態（用戶放棄）
+              const sessionStore = useSessionStore.getState();
+              sessionStore.clearPendingEncounter();
+              console.log('[GameScreen] User forfeited pending encounter');
+            },
+          },
+          {
+            text: 'Resume',
+            onPress: () => {
+              // 重新觸發廣告救援流程（直接傳遞 LootResult，不包裝成事件）
+              // 注意：handleLootRescueAvailable 現在支援兩種調用方式
+              const lootResult: LootResult = {
+                tier: item.tier,
+                success: false,
+                reason: 'ad_rescue_available',
+                item: item,
+                itemId: item.id,
+                itemValue: itemValue,
+                pickupCost: pickupCost,
+                currentStamina: playerState.stamina,
+                requiredStamina: pickupCost,
+              };
+              
+              // 直接調用處理函數（傳遞 LootResult 而不是 EntropyEvent）
+              handleLootRescueAvailable(lootResult);
+            },
+          },
+        ]
+      );
+    }
+  }, []); // 只在組件掛載時執行一次
 
   // 事件監聽：訂閱熵引擎事件
   useEffect(() => {
@@ -58,23 +110,29 @@ export default function GameScreen() {
       );
     };
 
-    // T3 廣告救援事件（空間夠但體力不足）
-    const handleLootRescueAvailable = (event: EntropyEvent) => {
-      const lootData = event.data as LootResult;
-      const { item, itemValue, pickupCost, currentStamina, requiredStamina } = lootData;
+    // 通用廣告救援事件（空間夠但體力不足，支援所有階層）
+    const handleLootRescueAvailable = (event: EntropyEvent | LootResult) => {
+      // 支援兩種調用方式：
+      // 1. 從事件系統調用（EntropyEvent）
+      // 2. 從恢復流程調用（直接傳遞 LootResult）
+      const lootData = 'data' in event ? (event.data as LootResult) : event;
+      const { item, itemValue, pickupCost, currentStamina, requiredStamina, tier } = lootData;
       
-      if (!item || item.tier !== 3) {
-        console.error('[GameScreen] T3 rescue event missing required data');
+      if (!item) {
+        console.error('[GameScreen] Ad rescue event missing required data');
         return;
       }
+      
+      // 通用化：支援所有階層（T1/T2/T3），不限制於 T3
+      const tierName = tier === 1 ? 'Sugar' : tier === 2 ? 'Energy Bar' : 'Royal Sugar';
       
       const playerStore = usePlayerStore.getState();
       const sessionStore = useSessionStore.getState();
       
-      // 顯示廣告救援模態框
+      // 顯示廣告救援模態框（通用型，支援所有階層）
       Alert.alert(
-        '💎 Found T3 Royal Sugar!',
-        `You found a T3 item ($${itemValue} SOLE) but are too exhausted to lift it!\n\n` +
+        `💎 Found T${tier} ${tierName}!`,
+        `You found a T${tier} item ($${itemValue} SOLE) but are too exhausted to lift it!\n\n` +
         `Current Stamina: ${currentStamina}/${requiredStamina}\n\n` +
         `Watch an Ad to inject Adrenaline (+30 Stamina) and pick it up?`,
         [
@@ -82,7 +140,10 @@ export default function GameScreen() {
             text: 'Give Up (Item Lost)',
             style: 'cancel',
             onPress: () => {
-              console.log('[GameScreen] User gave up T3 item');
+              // 清除待救援狀態（用戶放棄）
+              const sessionStore = useSessionStore.getState();
+              sessionStore.clearPendingEncounter();
+              console.log(`[GameScreen] User gave up T${tier} item`);
             },
           },
           {
@@ -101,7 +162,8 @@ export default function GameScreen() {
               }
               
               // Step 3: 模擬觀看廣告（1 秒延遲）
-              console.log(`[T3 Rescue] Step 3: 開始觀看廣告...`);
+              // 注意：這是應用最容易崩潰的時刻，但我們已經保存了待救援狀態
+              console.log(`[Ad Rescue] Step 3: 開始觀看廣告... (T${tier})`);
               await new Promise((resolve) => setTimeout(resolve, 1000));
               
               // Step A: 恢復體力（+30 點）
@@ -111,7 +173,7 @@ export default function GameScreen() {
               // 獲取最新狀態（Zustand 狀態更新是同步的，所以應該立即反映）
               const updatedPlayerStore = usePlayerStore.getState();
               const staminaAfterAd = updatedPlayerStore.stamina;
-              console.log(`[T3 Rescue] Step 3: 廣告觀看完畢 (+30)，當前體力: ${staminaAfterAd} (之前: ${staminaBeforeAd})`);
+              console.log(`[Ad Rescue] Step 3: 廣告觀看完畢 (+30)，當前體力: ${staminaAfterAd} (之前: ${staminaBeforeAd})`);
               
               // Step B: 強制執行拾取交易（原子操作）
               // 重要：在廣告救援場景中，我們已經驗證了空間，現在體力也足夠了
@@ -139,19 +201,22 @@ export default function GameScreen() {
                 const success = inventoryStore.addItem(item);
                 
                 if (success) {
-                  // 記錄衛生值債務
+                  // 記錄衛生值債務（通用型，支援所有階層）
                   const sessionStore = useSessionStore.getState();
-                  const contamination = calculateContamination(3);
+                  const contamination = calculateContamination(tier);
                   sessionStore.addHygieneDebt(contamination);
+                  
+                  // 清除待救援狀態（交易原子性：只有在物品成功添加後才清除）
+                  sessionStore.clearPendingEncounter();
                   
                   // 獲取最終體力（用於日誌）
                   const finalStamina = usePlayerStore.getState().stamina;
-                  console.log(`[T3 Rescue] Step 4: 自動扣除拾取體力 (-${pickupCost})`);
-                  console.log(`[T3 Rescue] === 最終結算體力: ${finalStamina} ===`);
+                  console.log(`[Ad Rescue] Step 4: 自動扣除拾取體力 (-${pickupCost})`);
+                  console.log(`[Ad Rescue] === 最終結算體力: ${finalStamina} ===`);
                   
                   Alert.alert(
                     'Success!',
-                    `Adrenaline injected! Picked up T3 Royal Sugar ($${itemValue} SOLE)!`,
+                    `Adrenaline injected! Picked up T${tier} ${tierName} ($${itemValue} SOLE)!`,
                     [{ text: 'OK' }]
                   );
                 } else {
@@ -167,16 +232,19 @@ export default function GameScreen() {
                     const retrySuccess = inventoryStore.addItem(item);
                     if (retrySuccess) {
                       const sessionStore = useSessionStore.getState();
-                      const contamination = calculateContamination(3);
+                      const contamination = calculateContamination(tier);
                       sessionStore.addHygieneDebt(contamination);
                       
+                      // 清除待救援狀態（交易原子性）
+                      sessionStore.clearPendingEncounter();
+                      
                       const finalStamina = usePlayerStore.getState().stamina;
-                      console.log(`[T3 Rescue] Step 4 (Retry): 自動扣除拾取體力 (-${pickupCost})`);
-                      console.log(`[T3 Rescue] === 最終結算體力: ${finalStamina} ===`);
+                      console.log(`[Ad Rescue] Step 4 (Retry): 自動扣除拾取體力 (-${pickupCost})`);
+                      console.log(`[Ad Rescue] === 最終結算體力: ${finalStamina} ===`);
                       
                       Alert.alert(
                         'Success!',
-                        `Adrenaline injected! Picked up T3 Royal Sugar ($${itemValue} SOLE)!`,
+                        `Adrenaline injected! Picked up T${tier} ${tierName} ($${itemValue} SOLE)!`,
                         [{ text: 'OK' }]
                       );
                     } else {

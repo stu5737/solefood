@@ -8,6 +8,7 @@
 
 import { create } from 'zustand';
 import { calculateValue } from '../core/math/valuation';
+import type { Item } from '../types/item';
 
 /**
  * 救援廣告類型
@@ -23,6 +24,15 @@ interface AdCap {
 }
 
 /**
+ * 待救援物品狀態
+ */
+export interface PendingEncounter {
+  item: Item;                    // 待救援的物品（任意階層）
+  status: 'PENDING_AD';          // 狀態：等待廣告救援
+  timestamp: number;             // 觸發時間戳
+}
+
+/**
  * SessionState 介面定義
  */
 interface SessionState {
@@ -30,6 +40,7 @@ interface SessionState {
   estimatedValue: number;       // 估算價值（USD）
   pendingHygieneDebt: number;   // 累積衛生值債務（百分比）
   pendingDurabilityDebt: number; // 累積耐久度債務（百分比）
+  currentEncounter: PendingEncounter | null; // 當前待救援物品（通用型，支援所有階層）
   adCaps: {                     // 廣告上限追蹤
     stamina: AdCap;
     capacity: AdCap;
@@ -102,6 +113,24 @@ interface SessionActions {
    * 在卸貨結算後重置債務，準備下一次行程
    */
   resetDurabilityDebt: () => void;
+  
+  /**
+   * 設置待救援物品（通用型）
+   * 
+   * 當玩家觸發廣告救援時，立即保存物品狀態到持久化存儲
+   * 支援所有階層的物品（T1/T2/T3），不限制於 T3
+   * 
+   * @param item - 待救援的物品
+   */
+  setPendingEncounter: (item: Item) => void;
+  
+  /**
+   * 清除待救援物品
+   * 
+   * 在廣告救援成功完成後，清除待救援狀態
+   * 確保交易原子性：只有在物品成功添加到背包後才清除
+   */
+  clearPendingEncounter: () => void;
 }
 
 type SessionStore = SessionState & SessionActions;
@@ -111,6 +140,7 @@ const initialState: SessionState = {
   estimatedValue: 0,
   pendingHygieneDebt: 0,      // 累積衛生值債務（初始為 0）
   pendingDurabilityDebt: 0,   // 累積耐久度債務（初始為 0）
+  currentEncounter: null,      // 當前待救援物品（初始為 null）
   adCaps: {
     stamina: {
       used: 0,
@@ -293,5 +323,41 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     });
     
     console.log('[SessionStore] Durability debt reset');
+  },
+  
+  /**
+   * 設置待救援物品（通用型）
+   * 
+   * 當玩家觸發廣告救援時，立即保存物品狀態到持久化存儲
+   * 支援所有階層的物品（T1/T2/T3），不限制於 T3
+   * 
+   * @param item - 待救援的物品
+   */
+  setPendingEncounter: (item: Item) => {
+    const encounter: PendingEncounter = {
+      item,
+      status: 'PENDING_AD',
+      timestamp: Date.now(),
+    };
+    
+    set({
+      currentEncounter: encounter,
+    });
+    
+    console.log(`[SessionStore] Pending encounter saved: T${item.tier} item (${item.id})`);
+  },
+  
+  /**
+   * 清除待救援物品
+   * 
+   * 在廣告救援成功完成後，清除待救援狀態
+   * 確保交易原子性：只有在物品成功添加到背包後才清除
+   */
+  clearPendingEncounter: () => {
+    set({
+      currentEncounter: null,
+    });
+    
+    console.log('[SessionStore] Pending encounter cleared');
   },
 }));
