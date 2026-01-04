@@ -100,13 +100,17 @@ export default function GameScreen() {
                 return;
               }
               
-              // 模擬觀看廣告（1 秒延遲）
+              // Step 3: 模擬觀看廣告（1 秒延遲）
+              console.log(`[T3 Rescue] Step 3: 開始觀看廣告...`);
               await new Promise((resolve) => setTimeout(resolve, 1000));
               
               // 恢復體力（+30 點）
+              const staminaBeforeAd = playerStore.stamina;
               playerStore.updateStamina(30);
+              const staminaAfterAd = playerStore.stamina;
+              console.log(`[T3 Rescue] Step 3: 廣告觀看完畢 (+30)，當前體力: ${staminaAfterAd} (之前: ${staminaBeforeAd})`);
               
-              // 檢查現在是否有足夠體力拾取
+              // Step 4: 檢查現在是否有足夠體力拾取
               const newStamina = playerStore.stamina;
               if (newStamina >= pickupCost!) {
                 // 嘗試拾取物品
@@ -118,6 +122,10 @@ export default function GameScreen() {
                   const sessionStore = useSessionStore.getState();
                   const contamination = calculateContamination(3);
                   sessionStore.addHygieneDebt(contamination);
+                  
+                  // 調試日誌：匹配用戶提供的邏輯流程
+                  console.log(`[T3 Rescue] Step 4: 自動扣除拾取體力 (-${pickupCost})`);
+                  console.log(`[T3 Rescue] === 最終結算體力: ${playerStore.stamina} ===`);
                   
                   Alert.alert(
                     'Success!',

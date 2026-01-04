@@ -157,6 +157,10 @@ class EntropyEngine {
     // 5.1 累積移動消耗（Step A: Move）
     // 重要：無論拾取結果如何，移動消耗都必須包含重量懲罰
     // 不應該因為溢出而重置為基礎值
+    // 調試日誌：匹配用戶提供的邏輯流程（Step 1: 走路的沈沒成本）
+    if (lootEventsCount > 0) {
+      console.log(`[Walk Event] Step 1: 走完 100m，扣除體力 ${finalMoveBurn.toFixed(1)}，當前體力: ${playerState.stamina}`);
+    }
     totalStaminaChange -= finalMoveBurn;
 
     // 6. 計算最終體力變化（已累積在 totalStaminaChange 中）
@@ -444,6 +448,9 @@ class EntropyEngine {
       else if (currentPlayerState.stamina < item.pickupCost) {
         // 特殊處理：T3 物品且體力不足時，提供廣告救援機會
         if (tier === 3) {
+          // 調試日誌：匹配用戶提供的邏輯流程
+          console.log(`[T3 Rescue] Step 2: 發現 T3 物品！體力不足 (${currentPlayerState.stamina} < ${item.pickupCost})`);
+          
           // 發射 T3 救援可用事件
           // UI 將顯示廣告救援模態框
           this.emitEvent({
