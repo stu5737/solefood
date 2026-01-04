@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Solefood MVP",
+    "slug": "solefoodmvp",
+    "version": "8.7.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "solefood",
+    "plugins": [
+      "expo-router"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ]
+  }
+}
+
