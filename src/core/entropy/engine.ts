@@ -351,16 +351,14 @@ class EntropyEngine {
       
       if (success) {
         // 5. 物品已成功添加到背包
-        // 重要：記錄衛生值債務（累積債務模式）
-        // 當物品進入背包時，立即記錄衛生值污染債務
-        // 即使物品後來被食用，債務仍然存在
-        const sessionStore = useSessionStore.getState();
+        // 重要：分時機制 - 衛生值即時扣除（Real-Time Hygiene）
+        // 衛生值必須在拾取時立即扣除，就像體力一樣
+        // 這讓玩家能夠即時看到衛生值的變化，做出戰略決策
         const contamination = calculateContamination(tier);
-        sessionStore.addHygieneDebt(contamination);
+        playerState.updateHygiene(-contamination);
         
-        // 注意：不在此處扣除玩家衛生值（保持「安全旅程」）
-        // 衛生值將在卸貨結算時一次性扣除（見 unloading.ts）
-        // 這確保了「安全旅程」：移動過程中衛生值保持 100%
+        // 注意：不再使用累積債務模式（衛生值改為即時扣除）
+        // 耐久度仍然使用累積債務模式（在卸貨結算時一次性扣除）
         
         // 發射拾取成功事件（用於 UI toast）
         this.emitEvent({

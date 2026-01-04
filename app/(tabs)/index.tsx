@@ -260,8 +260,8 @@ export default function GameScreen() {
                 setTimeout(() => {
                   const success = inventoryStore.addItem(item);
                   if (success) {
-                    // 注意：衛生值污染不再在拾取時實時扣除
-                    // 衛生值將在卸貨結算時一次性扣除（見 unloading.ts）
+                    // 注意：衛生值已改為即時扣除（分時機制）
+                    // 衛生值在 addItem 成功時已經即時扣除（見 engine.ts）
                     
                     Alert.alert('Success', `Consumed ${consumedCount}x T1 Sugars and picked up T${tier} item!`);
                   } else {
@@ -395,6 +395,43 @@ export default function GameScreen() {
 
   // 調試功能：模擬移動 - 步行 100m
   const simulateWalk = () => {
+    // A. 開始前警告（耐久度檢查）
+    if (playerState.durability < 90) {
+      const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
+      Alert.alert(
+        '⚠️ Equipment Worn',
+        `Durability is ${playerState.durability.toFixed(1)}% (<90%).\n\n` +
+        `Effective capacity reduced to ${effectiveMaxWeight.toFixed(1)}kg (90% of base).\n\n` +
+        `Repair now?`,
+        [
+          {
+            text: 'Continue Anyway',
+            style: 'cancel',
+            onPress: () => {
+              // 繼續執行移動
+              try {
+                entropyEngine.processMovement({
+                  distance: 0.1, // 100m = 0.1km
+                  speed: 5.0,   // 5 km/h (步行速度)
+                  timestamp: Date.now(),
+                });
+              } catch (error) {
+                Alert.alert('錯誤', `模擬移動失敗: ${error}`);
+              }
+            },
+          },
+          {
+            text: 'Cancel',
+            onPress: () => {
+              // 取消移動
+            },
+          },
+        ]
+      );
+      return;
+    }
+    
+    // 耐久度正常，直接執行移動
     try {
       entropyEngine.processMovement({
         distance: 0.1, // 100m = 0.1km
@@ -408,6 +445,43 @@ export default function GameScreen() {
 
   // 調試功能：模擬移動 - 快跑 500m
   const simulateSprint = () => {
+    // A. 開始前警告（耐久度檢查）
+    if (playerState.durability < 90) {
+      const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
+      Alert.alert(
+        '⚠️ Equipment Worn',
+        `Durability is ${playerState.durability.toFixed(1)}% (<90%).\n\n` +
+        `Effective capacity reduced to ${effectiveMaxWeight.toFixed(1)}kg (90% of base).\n\n` +
+        `Repair now?`,
+        [
+          {
+            text: 'Continue Anyway',
+            style: 'cancel',
+            onPress: () => {
+              // 繼續執行移動
+              try {
+                entropyEngine.processMovement({
+                  distance: 0.5, // 500m = 0.5km
+                  speed: 12.0,   // 12 km/h (快跑速度)
+                  timestamp: Date.now(),
+                });
+              } catch (error) {
+                Alert.alert('錯誤', `模擬移動失敗: ${error}`);
+              }
+            },
+          },
+          {
+            text: 'Cancel',
+            onPress: () => {
+              // 取消移動
+            },
+          },
+        ]
+      );
+      return;
+    }
+    
+    // 耐久度正常，直接執行移動
     try {
       entropyEngine.processMovement({
         distance: 0.5, // 500m = 0.5km
@@ -468,32 +542,85 @@ export default function GameScreen() {
     
     try {
       const result = calculateSettlement('normal');
+      const constants = require('../../src/utils/constants');
+      const ITEM_VALUES = constants.ITEM_VALUES;
+      // 清潔費常數位於 HYGIENE 對象中，添加預設值作為安全網
+      const CLEAN_COST_PER_PERCENT = constants.HYGIENE?.CLEAN_COST_PER_PERCENT ?? 2;
       
-      // 計算成本（基於 v8.7 經濟模型）
-      // 1. 清潔費：每 1% 汙染 = 2 $SOLE
-      const cleaningCost = result.hygieneLoss * 2;
+      // ========== 1. 計算總毛收益（所有物品的總價值）==========
+      let totalGrossValue = 0;
+      inventoryStore.items.forEach((item) => {
+        const itemValue = ITEM_VALUES[`T${item.tier}` as 'T1' | 'T2' | 'T3'];
+        totalGrossValue += itemValue;
+      });
       
-      // 2. 維修費：每 1% 磨損 × 5 $SOLE × 背包容量（kg）
-      // 使用 baseMaxWeight 代表背包階層
+      // ========== 2. 確定質量狀態（90% 閾值規則）==========
+      const currentHygiene = playerState.hygiene;
+      const threshold = 90;
+      const isGradeB = currentHygiene < threshold;
+      const qualityMultiplier = isGradeB ? 0.9 : 1.0;
+      const qualityGrade = isGradeB ? 'Grade B' : 'Grade A';
+      
+      // ========== 3. 計算財務數據 ==========
+      // 預期收益（應用質量倍率）
+      const projectedRevenue = totalGrossValue * qualityMultiplier;
+      
+      // 收益損失（如果衛生值 < 90%）
+      const revenuePenalty = totalGrossValue - projectedRevenue;
+      
+      // 清潔成本（恢復到 100% 的成本）
+      const hygieneDeficit = 100 - currentHygiene;
+      const cleaningCost = hygieneDeficit * CLEAN_COST_PER_PERCENT;
+      
+      // ========== 4. 計算其他成本 ==========
+      // 維修費：每 1% 磨損 × 5 $SOLE × 背包容量（kg）
       const repairCost = result.durabilityLoss * (5 * playerState.baseMaxWeight);
       
-      // 3. 淨利潤
-      const netProfit = result.revenue - cleaningCost - repairCost;
+      // ========== 5. 計算淨利潤 ==========
+      const netProfit = projectedRevenue - cleaningCost - repairCost;
       
-      // 構建詳細的結算預覽消息
-      const message = 
-        `預期收益: $${result.revenue.toFixed(2)} SOLE\n\n` +
-        `成本明細:\n` +
-        `• 清潔費: -$${cleaningCost.toFixed(2)} (${result.hygieneLoss.toFixed(1)}% × $2)\n` +
-        `• 維修費: -$${repairCost.toFixed(2)} (${result.durabilityLoss.toFixed(1)}% × $5 × ${playerState.baseMaxWeight}kg)\n` +
-        `─────────────────────\n` +
-        `預估淨利: $${netProfit.toFixed(2)} SOLE\n\n` +
-        `其他資訊:\n` +
-        `• 距離: ${result.totalDistance.toFixed(2)}km\n` +
-        `• 物品數量: ${result.itemsDelivered}\n` +
-        `• 耐久度損失: -${result.durabilityLoss.toFixed(1)}%\n` +
-        `• 衛生值損失: -${result.hygieneLoss.toFixed(1)}%\n\n` +
-        `點擊「UNLOAD / SETTLE」按鈕以應用結算。`;
+      // ========== 6. 構建詳細的結算預覽消息 ==========
+      let message = `預期收益: $${projectedRevenue.toFixed(2)} SOLE\n\n`;
+      
+      // 質量狀態和收益損失
+      if (isGradeB) {
+        message += `⚠️ 質量警告:\n`;
+        message += `• 當前衛生值: ${currentHygiene.toFixed(1)}% (<90%)\n`;
+        message += `• 質量等級: ${qualityGrade} (10% 折損)\n`;
+        message += `• 收益損失: -$${revenuePenalty.toFixed(2)} SOLE\n`;
+        message += `• 清潔成本: $${cleaningCost.toFixed(2)} SOLE (恢復到 100%)\n`;
+        if (cleaningCost < revenuePenalty) {
+          message += `💡 提示: 清潔成本 ($${cleaningCost.toFixed(2)}) < 收益損失 ($${revenuePenalty.toFixed(2)})，建議清潔！\n`;
+        }
+        message += `\n`;
+      } else {
+        message += `✅ 質量狀態:\n`;
+        message += `• 當前衛生值: ${currentHygiene.toFixed(1)}% (≥90%)\n`;
+        message += `• 質量等級: ${qualityGrade} (100% 價值)\n`;
+        message += `• 收益損失: $0.00 SOLE\n`;
+        if (currentHygiene < 100) {
+          message += `• 清潔成本: $${cleaningCost.toFixed(2)} SOLE (恢復到 100%，可選)\n`;
+        }
+        message += `\n`;
+      }
+      
+      // 成本明細
+      message += `成本明細:\n`;
+      // 使用預設值 2 作為安全網，確保顯示正常
+      const displayRate = CLEAN_COST_PER_PERCENT ?? 2;
+      message += `• 清潔費: -$${cleaningCost.toFixed(2)} (${hygieneDeficit.toFixed(1)}% × $${displayRate})\n`;
+      message += `• 維修費: -$${repairCost.toFixed(2)} (${result.durabilityLoss.toFixed(1)}% × $5 × ${playerState.baseMaxWeight}kg)\n`;
+      message += `─────────────────────\n`;
+      message += `預估淨利: $${netProfit.toFixed(2)} SOLE\n\n`;
+      
+      // 其他資訊
+      message += `其他資訊:\n`;
+      message += `• 距離: ${result.totalDistance.toFixed(2)}km\n`;
+      message += `• 物品數量: ${result.itemsDelivered}\n`;
+      message += `• 總毛收益: $${totalGrossValue.toFixed(2)} SOLE\n`;
+      message += `• 耐久度損失: -${result.durabilityLoss.toFixed(1)}%\n`;
+      message += `• 當前衛生值: ${currentHygiene.toFixed(1)}%\n\n`;
+      message += `點擊「UNLOAD / SETTLE」按鈕以應用結算。`;
       
       Alert.alert(
         '💰 結算預覽（未應用）',
@@ -585,34 +712,103 @@ export default function GameScreen() {
       return;
     }
 
+    // B. 卸貨前警告（衛生值檢查）
+    if (playerState.hygiene < 90) {
+      // 計算潛在損失
+      const { ITEM_VALUES } = require('../../src/utils/constants');
+      let totalValue = 0;
+      inventoryStore.items.forEach((item) => {
+        const itemValue = ITEM_VALUES[`T${item.tier}` as 'T1' | 'T2' | 'T3'];
+        totalValue += itemValue;
+      });
+      const potentialLoss = totalValue * 0.1; // 10% 折損
+      
+      Alert.alert(
+        '⚠️ Quality Warning!',
+        `Hygiene is ${playerState.hygiene.toFixed(1)}% (<90%).\n\n` +
+        `Vendors will pay 10% less (Grade B Quality).\n` +
+        `📉 Potential Loss: -$${potentialLoss.toFixed(2)} SOLE\n\n` +
+        `🧼 Clean now to restore Grade A (100% Value)?`,
+        [
+          {
+            text: 'Continue Anyway',
+            style: 'cancel',
+            onPress: () => {
+              // 繼續執行卸貨
+              executeUnload();
+            },
+          },
+          {
+            text: 'Cancel',
+            onPress: () => {
+              // 取消卸貨
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    // 衛生值正常，直接執行卸貨
+    executeUnload();
+  };
+
+  // 實際執行卸貨的函數
+  const executeUnload = () => {
     try {
       // 執行卸貨結算（使用 normal 模式，可以後續擴展為選擇模式）
       const result = executeUnloadSettlement('normal');
 
       // 計算成本（基於 v8.7 經濟模型）
-      // 1. 清潔費：每 1% 汙染 = 2 $SOLE
-      const cleaningCost = result.hygieneLoss * 2;
+      const constants = require('../../src/utils/constants');
+      // 清潔費常數位於 HYGIENE 對象中，添加預設值作為安全網
+      const CLEAN_COST_PER_PERCENT = constants.HYGIENE?.CLEAN_COST_PER_PERCENT ?? 2;
       
-      // 2. 維修費：每 1% 磨損 × 5 $SOLE × 背包容量（kg）
-      // 使用 baseMaxWeight 代表背包階層
+      // ========== 確定質量狀態（90% 閾值規則）==========
+      // 注意：結算時衛生值可能已經變化，所以我們使用結算後的衛生值
+      const currentHygiene = playerState.hygiene;
+      const threshold = 90;
+      const isGradeB = currentHygiene < threshold;
+      const qualityGrade = isGradeB ? 'Grade B' : 'Grade A';
+      
+      // ========== 計算財務數據 ==========
+      // 清潔成本（恢復到 100% 的成本）
+      const hygieneDeficit = 100 - currentHygiene;
+      const cleaningCost = hygieneDeficit * CLEAN_COST_PER_PERCENT;
+      
+      // 維修費：每 1% 磨損 × 5 $SOLE × 背包容量（kg）
       const repairCost = result.durabilityLoss * (5 * playerState.baseMaxWeight);
       
-      // 3. 淨利潤
+      // ========== 計算淨利潤 ==========
       const netProfit = result.revenue - cleaningCost - repairCost;
       
-      // 構建詳細的結算摘要消息
-      const message = 
-        `收益: $${result.revenue.toFixed(2)} SOLE\n\n` +
-        `成本明細:\n` +
-        `• 清潔費: -$${cleaningCost.toFixed(2)} (${result.hygieneLoss.toFixed(1)}% × $2)\n` +
-        `• 維修費: -$${repairCost.toFixed(2)} (${result.durabilityLoss.toFixed(1)}% × $5 × ${playerState.baseMaxWeight}kg)\n` +
-        `─────────────────────\n` +
-        `淨利潤: $${netProfit.toFixed(2)} SOLE\n\n` +
-        `其他資訊:\n` +
-        `• 距離: ${result.totalDistance.toFixed(2)}km\n` +
-        `• 物品數量: ${result.itemsDelivered}\n` +
-        `• 耐久度損失: -${result.durabilityLoss.toFixed(1)}% (Calculated via Cumulative Debt)\n` +
-        `• 衛生值損失: -${result.hygieneLoss.toFixed(1)}%`;
+      // ========== 構建詳細的結算摘要消息 ==========
+      let message = `收益: $${result.revenue.toFixed(2)} SOLE\n\n`;
+      
+      // 質量狀態
+      if (isGradeB) {
+        message += `⚠️ 質量狀態: ${qualityGrade} (衛生值 ${currentHygiene.toFixed(1)}% < 90%)\n`;
+        message += `收益已應用 10% 折損\n\n`;
+      } else {
+        message += `✅ 質量狀態: ${qualityGrade} (衛生值 ${currentHygiene.toFixed(1)}% ≥ 90%)\n`;
+        message += `收益為 100% 價值\n\n`;
+      }
+      
+      // 成本明細
+      message += `成本明細:\n`;
+      // 使用預設值 2 作為安全網，確保顯示正常
+      const displayRate = CLEAN_COST_PER_PERCENT ?? 2;
+      message += `• 清潔費: -$${cleaningCost.toFixed(2)} (${hygieneDeficit.toFixed(1)}% × $${displayRate})\n`;
+      message += `• 維修費: -$${repairCost.toFixed(2)} (${result.durabilityLoss.toFixed(1)}% × $5 × ${playerState.baseMaxWeight}kg)\n`;
+      message += `─────────────────────\n`;
+      message += `淨利潤: $${netProfit.toFixed(2)} SOLE\n\n`;
+      
+      // 其他資訊
+      message += `其他資訊:\n`;
+      message += `• 距離: ${result.totalDistance.toFixed(2)}km\n`;
+      message += `• 物品數量: ${result.itemsDelivered}\n`;
+      message += `• 耐久度損失: -${result.durabilityLoss.toFixed(1)}% (Calculated via Cumulative Debt)\n`;
+      message += `• 當前衛生值: ${currentHygiene.toFixed(1)}%`;
 
       Alert.alert(
         'Delivery Complete!',

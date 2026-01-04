@@ -47,9 +47,10 @@ export function calculateSettlement(mode: PayoutMode = 'normal'): UnloadSettleme
   // 即使玩家在卸貨前減輕負重，債務仍然存在
   const totalDurabilityLoss = sessionStore.pendingDurabilityDebt;
 
-  // 3. 計算總衛生值損失（基於累積債務，而不是當前庫存）
-  // 重要：使用累積債務模式，確保即使物品被食用，債務仍然存在
-  const totalHygieneLoss = sessionStore.pendingHygieneDebt;
+  // 3. 計算總衛生值損失
+  // 注意：衛生值已改為即時扣除（分時機制），所以這裡不需要計算損失
+  // 但為了向後兼容和日誌顯示，我們仍然返回 0
+  const totalHygieneLoss = 0;
 
   // 4. 計算基礎收益（所有物品的總價值）
   let baseValue = 0;
@@ -58,7 +59,8 @@ export function calculateSettlement(mode: PayoutMode = 'normal'): UnloadSettleme
     baseValue += itemValue;
   });
 
-  // 5. 計算最終收益（應用變現倍率和衛生值折損）
+  // 5. 計算最終收益（應用變現倍率和階層閾值機制）
+  // 階層閾值：衛生值 >= 90% 使用 100% 價值，< 90% 使用 90% 價值
   const revenue = calculateFinalPayout(baseValue, mode, currentHygiene);
 
   // 6. 返回結算結果（不應用狀態變更）
@@ -99,10 +101,10 @@ export function executeUnloadSettlement(mode: PayoutMode = 'normal'): UnloadSett
   // 這確保了「工業強化」數學模型的完整性
   const totalDurabilityLoss = sessionStore.pendingDurabilityDebt;
 
-  // 3. 計算總衛生值損失（基於累積債務，而不是當前庫存）
-  // 重要：使用累積債務模式，確保即使物品被食用，債務仍然存在
-  // 這修復了漏洞：如果玩家在旅程中手動食用物品，結算時仍會扣除該物品造成的污染
-  const totalHygieneLoss = sessionStore.pendingHygieneDebt;
+  // 3. 計算總衛生值損失
+  // 注意：衛生值已改為即時扣除（分時機制），所以這裡不需要計算損失
+  // 但為了向後兼容和日誌顯示，我們仍然返回 0
+  const totalHygieneLoss = 0;
 
   // 4. 計算基礎收益（所有物品的總價值）
   let baseValue = 0;
@@ -111,16 +113,19 @@ export function executeUnloadSettlement(mode: PayoutMode = 'normal'): UnloadSett
     baseValue += itemValue;
   });
 
-  // 5. 計算最終收益（應用變現倍率和衛生值折損）
-  // 注意：使用當前衛生值（100%）計算收益，因為衰減在收益計算後才應用
+  // 5. 計算最終收益（應用變現倍率和階層閾值機制）
+  // 階層閾值：衛生值 >= 90% 使用 100% 價值，< 90% 使用 90% 價值
+  // 注意：使用當前衛生值計算收益（衛生值已改為即時扣除）
   const revenue = calculateFinalPayout(baseValue, mode, currentHygiene);
 
   // 6. 應用狀態變更
   // 6.1 衰減耐久度（會自動觸發 checkZeroTolerance）
+  // 注意：耐久度使用累積債務模式，在卸貨結算時一次性扣除
   playerStore.updateDurability(-totalDurabilityLoss);
 
-  // 6.2 衰減衛生值
-  playerStore.updateHygiene(-totalHygieneLoss);
+  // 6.2 衛生值已改為即時扣除（分時機制），不需要在結算時再次扣除
+  // 衛生值在拾取物品時已經即時扣除，這裡不需要額外操作
+  // 注意：不再重置衛生值債務，因為衛生值已改為即時扣除
 
   // 6.3 清空庫存
   // 移除所有物品並重置重量
@@ -135,8 +140,8 @@ export function executeUnloadSettlement(mode: PayoutMode = 'normal'): UnloadSett
   // 6.4 重置會話（距離和估值）
   sessionStore.resetSession();
   
-  // 6.5 重置衛生值債務（準備下一次行程）
-  sessionStore.resetHygieneDebt();
+  // 6.5 衛生值已改為即時扣除（分時機制），不需要重置債務
+  // 注意：不再重置衛生值債務，因為衛生值已改為即時扣除
   
   // 6.6 重置耐久度債務（準備下一次行程）
   sessionStore.resetDurabilityDebt();

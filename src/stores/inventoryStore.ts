@@ -88,8 +88,9 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       return false;
     }
     
-    // FIRST: 檢查容量
-    const wouldExceedWeight = totalWeight + item.weight > playerState.maxWeight;
+    // FIRST: 檢查容量（使用有效最大容量，考慮階層閾值）
+    const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
+    const wouldExceedWeight = totalWeight + item.weight > effectiveMaxWeight;
     
     // SECOND: 檢查體力
     const requiredStamina = calculatePickupCost(item.tier);
@@ -109,9 +110,10 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const playerState = usePlayerStore.getState();
     const { items, totalWeight } = get();
     
-    // FIRST: 檢查容量
-    // 驗證：currentWeight + item.weight <= maxWeight
-    const wouldExceedWeight = totalWeight + item.weight > playerState.maxWeight;
+    // FIRST: 檢查容量（使用有效最大容量，考慮階層閾值）
+    // 驗證：currentWeight + item.weight <= effectiveMaxWeight
+    const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
+    const wouldExceedWeight = totalWeight + item.weight > effectiveMaxWeight;
     
     if (wouldExceedWeight) {
       console.warn('[InventoryStore] Cannot add item: Weight limit exceeded', {

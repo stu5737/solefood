@@ -71,6 +71,19 @@ interface PlayerActions {
    * 設置當前負重
    */
   setWeight: (weight: number) => void;
+  
+  /**
+   * 獲取有效最大容量（階層閾值機制）
+   * 
+   * 根據白皮書 v8.7：階層閾值（Forgiveness Mechanic）
+   * - 耐久度 >= 90%：使用完整容量
+   * - 耐久度 < 90%：容量降至 90%（警告機制）
+   * 
+   * 這避免了微小的懲罰讓玩家感到煩惱
+   * 
+   * @returns 有效最大容量（kg）
+   */
+  getEffectiveMaxWeight: () => number;
 }
 
 type PlayerStore = PlayerState & PlayerActions;
@@ -134,6 +147,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       );
       
       // 使用 calculateMaxCapacity 重新計算最大容量
+      // 注意：這裡計算的是理論最大容量，實際有效容量由 getEffectiveMaxWeight 決定
       const newMaxWeight = calculateMaxCapacity(state.baseMaxWeight, newDurability);
       
       return {
@@ -220,5 +234,29 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     
     set({ currentWeight: weight });
+  },
+  
+  /**
+   * 獲取有效最大容量（階層閾值機制）
+   * 
+   * 根據白皮書 v8.7：階層閾值（Forgiveness Mechanic）
+   * - 耐久度 >= 90%：使用完整容量
+   * - 耐久度 < 90%：容量降至 90%（警告機制）
+   * 
+   * 這避免了微小的懲罰讓玩家感到煩惱
+   * 
+   * @returns 有效最大容量（kg）
+   */
+  getEffectiveMaxWeight: () => {
+    const state = get();
+    const threshold = 90; // 階層閾值（90%）
+    
+    // 如果耐久度 < 90%，有效容量降至 90%
+    if (state.durability < threshold) {
+      return state.baseMaxWeight * 0.9;
+    }
+    
+    // 否則使用完整容量
+    return state.baseMaxWeight;
   },
 }));

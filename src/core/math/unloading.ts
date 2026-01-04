@@ -57,11 +57,17 @@ export function getPayoutMultiplier(mode: PayoutMode): number {
 }
 
 /**
- * 計算最終收益
+ * 計算最終收益（階層閾值機制）
  * @param baseValue 基礎價值（$SOLE）
  * @param mode 變現模式
  * @param hygiene 衛生值（0-100，用於收益折損）
  * @returns 最終收益（$SOLE）
+ * 
+ * 階層閾值邏輯（Forgiveness Mechanic）：
+ * - 衛生值 >= 90%：使用 100% 價值（Grade A Quality）
+ * - 衛生值 < 90%：使用 90% 價值（Grade B Quality，10% 折損）
+ * 
+ * 這避免了微小的懲罰讓玩家感到煩惱
  */
 export function calculateFinalPayout(
   baseValue: number,
@@ -71,8 +77,10 @@ export function calculateFinalPayout(
   const multiplier = getPayoutMultiplier(mode);
   const baseEarnings = baseValue * multiplier;
   
-  // 應用衛生值折損
-  const hygieneRatio = hygiene / 100;
-  return baseEarnings * hygieneRatio;
+  // 階層閾值機制：衛生值 < 90% 時，收益降至 90%
+  const threshold = 90;
+  const qualityMultiplier = hygiene < threshold ? 0.9 : 1.0;
+  
+  return baseEarnings * qualityMultiplier;
 }
 
