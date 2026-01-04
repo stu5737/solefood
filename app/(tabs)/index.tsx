@@ -104,17 +104,38 @@ export default function GameScreen() {
               console.log(`[T3 Rescue] Step 3: 開始觀看廣告...`);
               await new Promise((resolve) => setTimeout(resolve, 1000));
               
-              // 恢復體力（+30 點）
+              // Step A: 恢復體力（+30 點）
               const staminaBeforeAd = playerStore.stamina;
               playerStore.updateStamina(30);
-              const staminaAfterAd = playerStore.stamina;
+              
+              // 獲取最新狀態（Zustand 狀態更新是同步的，所以應該立即反映）
+              const updatedPlayerStore = usePlayerStore.getState();
+              const staminaAfterAd = updatedPlayerStore.stamina;
               console.log(`[T3 Rescue] Step 3: 廣告觀看完畢 (+30)，當前體力: ${staminaAfterAd} (之前: ${staminaBeforeAd})`);
               
-              // Step 4: 檢查現在是否有足夠體力拾取
-              const newStamina = playerStore.stamina;
-              if (newStamina >= pickupCost!) {
-                // 嘗試拾取物品
+              // Step B: 強制執行拾取交易（原子操作）
+              // 重要：在廣告救援場景中，我們已經驗證了空間，現在體力也足夠了
+              if (staminaAfterAd >= pickupCost!) {
                 const inventoryStore = useInventoryStore.getState();
+                
+                // 再次檢查空間（應該已經通過，但再次確認）
+                const currentWeight = inventoryStore.totalWeight;
+                const maxWeight = updatedPlayerStore.maxWeight;
+                
+                if (currentWeight + item.weight > maxWeight) {
+                  Alert.alert(
+                    'Error',
+                    'Backpack is now full. Cannot pick up item.',
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+                
+                // 直接調用 addItem（此時體力已經足夠，應該能成功）
+                // addItem 內部會：
+                // 1. 檢查體力（應該通過）
+                // 2. 扣除拾取成本
+                // 3. 添加物品
                 const success = inventoryStore.addItem(item);
                 
                 if (success) {
@@ -123,9 +144,10 @@ export default function GameScreen() {
                   const contamination = calculateContamination(3);
                   sessionStore.addHygieneDebt(contamination);
                   
-                  // 調試日誌：匹配用戶提供的邏輯流程
+                  // 獲取最終體力（用於日誌）
+                  const finalStamina = usePlayerStore.getState().stamina;
                   console.log(`[T3 Rescue] Step 4: 自動扣除拾取體力 (-${pickupCost})`);
-                  console.log(`[T3 Rescue] === 最終結算體力: ${playerStore.stamina} ===`);
+                  console.log(`[T3 Rescue] === 最終結算體力: ${finalStamina} ===`);
                   
                   Alert.alert(
                     'Success!',
@@ -133,16 +155,50 @@ export default function GameScreen() {
                     [{ text: 'OK' }]
                   );
                 } else {
-                  Alert.alert(
-                    'Error',
-                    'Failed to pick up item after watching ad. Please try again.',
-                    [{ text: 'OK' }]
-                  );
+                  // 如果 addItem 失敗，可能是狀態還沒完全同步
+                  // 等待一小段時間後重試
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  
+                  // 再次獲取最新狀態
+                  const retryPlayerStore = usePlayerStore.getState();
+                  const retryStamina = retryPlayerStore.stamina;
+                  
+                  if (retryStamina >= pickupCost!) {
+                    const retrySuccess = inventoryStore.addItem(item);
+                    if (retrySuccess) {
+                      const sessionStore = useSessionStore.getState();
+                      const contamination = calculateContamination(3);
+                      sessionStore.addHygieneDebt(contamination);
+                      
+                      const finalStamina = usePlayerStore.getState().stamina;
+                      console.log(`[T3 Rescue] Step 4 (Retry): 自動扣除拾取體力 (-${pickupCost})`);
+                      console.log(`[T3 Rescue] === 最終結算體力: ${finalStamina} ===`);
+                      
+                      Alert.alert(
+                        'Success!',
+                        `Adrenaline injected! Picked up T3 Royal Sugar ($${itemValue} SOLE)!`,
+                        [{ text: 'OK' }]
+                      );
+                    } else {
+                      Alert.alert(
+                        'Error',
+                        `Failed to pick up item after retry. Current stamina: ${retryStamina}, Required: ${pickupCost}`,
+                        [{ text: 'OK' }]
+                      );
+                    }
+                  } else {
+                    Alert.alert(
+                      'Error',
+                      `Failed to pick up item. Stamina is ${retryStamina} but need ${pickupCost}.`,
+                      [{ text: 'OK' }]
+                    );
+                  }
                 }
               } else {
+                // 這不應該發生，但如果發生了，顯示錯誤
                 Alert.alert(
-                  'Still Not Enough',
-                  `You need ${pickupCost} Stamina but only have ${newStamina}. The item is lost.`,
+                  'Error',
+                  `Unexpected: Stamina is ${staminaAfterAd} but need ${pickupCost}. Please report this bug.`,
                   [{ text: 'OK' }]
                 );
               }
