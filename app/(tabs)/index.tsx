@@ -5,7 +5,7 @@
  * 本畫面整合熵計算引擎、狀態管理和調試功能
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   Alert,
   SafeAreaView,
 } from 'react-native';
-import { StaminaBar, DurabilityBar, StatsPanel, GhostOverlay } from '../../src/components/game';
+import { StaminaBar, DurabilityBar, StatsPanel, GhostOverlay, AdRescueModal, UnloadModal } from '../../src/components/game';
 import { usePlayerStore } from '../../src/stores/playerStore';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import { useInventoryStore } from '../../src/stores/inventoryStore';
@@ -23,12 +23,98 @@ import { entropyEngine } from '../../src/core/entropy/engine';
 import { executeUnloadSettlement, calculateSettlement } from '../../src/core/game/unloading';
 import { calculateContamination } from '../../src/core/math/maintenance';
 import type { EntropyEvent, LootResult } from '../../src/core/entropy/events';
+import type { Item } from '../../src/types/item';
+import { ITEM_WEIGHTS, ITEM_VALUES, ITEM_PICKUP_COSTS, ITEM_CONSUME_RESTORE } from '../../src/utils/constants';
+import { locationService } from '../../src/services/location';
+import { saveData, loadData, STORAGE_KEYS } from '../../src/utils/storage';
 
 export default function GameScreen() {
   // 從 Store 獲取狀態
   const playerState = usePlayerStore();
   const sessionState = useSessionStore();
   const inventoryState = useInventoryStore();
+  
+  // 測試模態框狀態
+  const [adRescueVisible, setAdRescueVisible] = useState(false);
+  const [adRescueType, setAdRescueType] = useState<'adrenaline' | 'temporary_expansion'>('adrenaline');
+  const [adRescueItem, setAdRescueItem] = useState<Item | null>(null);
+  const [unloadModalVisible, setUnloadModalVisible] = useState(false);
+  
+  // ========== 應用啟動時檢查登入狀態 ==========
+  useEffect(() => {
+    // 檢查登入狀態（只在首次啟動時檢查）
+    if (!sessionState.hasCheckedLoginStatus) {
+      const loginStatus = sessionState.checkLoginStatus();
+      
+      if (loginStatus.needsRescue && loginStatus.canRescue) {
+        // 顯示休假救援模態框
+        Alert.alert(
+          '⚠️ 休假救援',
+          `您已經 ${loginStatus.missedDays} 天沒有登入了！\n\n` +
+          `您的 ${sessionState.luckGradient.streak} 天連續簽到和 ${(ITEM_DISTRIBUTION.T2_PERCENTAGE + sessionState.luckGradient.t2Bonus).toFixed(1)}% T2 幸運值面臨風險。\n\n` +
+          `觀看廣告可以凍結連續簽到（最多 3 天緩衝）。\n\n` +
+          `剩餘救援次數：${3 - sessionState.luckGradient.leaveDaysUsed}/3`,
+          [
+            {
+              text: '稍後處理',
+              style: 'cancel',
+              onPress: () => {
+                // 用戶選擇稍後處理，標記為已檢查
+                useSessionStore.setState({ hasCheckedLoginStatus: true });
+              },
+            },
+            {
+              text: '📺 觀看廣告凍結',
+              onPress: async () => {
+                // 模擬觀看廣告
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                const sessionStore = useSessionStore.getState();
+                const success = sessionStore.useLeaveRescue();
+                
+                if (success) {
+                  Alert.alert(
+                    '✅ 救援成功',
+                    `連續簽到已凍結！\n\n` +
+                    `當前連續簽到：${sessionStore.luckGradient.streak} 天\n` +
+                    `剩餘救援次數：${3 - sessionStore.luckGradient.leaveDaysUsed}/3`,
+                    [{ text: '確定' }]
+                  );
+                } else {
+                  Alert.alert(
+                    '❌ 救援失敗',
+                    '無法使用休假救援。可能已達到上限或超過緩衝期。',
+                    [{ text: '確定' }]
+                  );
+                }
+                
+                // 標記為已檢查
+                useSessionStore.setState({ hasCheckedLoginStatus: true });
+              },
+            },
+          ]
+        );
+      } else if (loginStatus.needsRescue && !loginStatus.canRescue) {
+        // 超過緩衝期，已進入衰減模式
+        Alert.alert(
+          '⚠️ 連續簽到已重置',
+          `您已經 ${loginStatus.missedDays} 天沒有登入，超過了 3 天緩衝期。\n\n` +
+          `連續簽到已重置為 0，T2 掉落率正在衰減中。\n\n` +
+          `當前 T2 機率：${sessionState.luckGradient.currentT2Chance.toFixed(1)}%`,
+          [{ text: '確定' }]
+        );
+        
+        // 標記為已檢查
+        const sessionStore = useSessionStore.getState();
+        sessionStore.hasCheckedLoginStatus = true;
+      } else {
+        // 正常登入，處理登入邏輯
+        sessionState.processLogin();
+        const sessionStore = useSessionStore.getState();
+        sessionStore.hasCheckedLoginStatus = true;
+      }
+    }
+  }, []); // 只在組件掛載時執行一次
   
   // ========== 應用啟動時恢復待救援物品 ==========
   useEffect(() => {
@@ -470,7 +556,8 @@ export default function GameScreen() {
       Alert.alert(
         '⚠️ Equipment Worn',
         `Durability is ${playerState.durability.toFixed(1)}% (<90%).\n\n` +
-        `Effective capacity reduced to ${effectiveMaxWeight.toFixed(1)}kg (90% of base).\n\n` +
+        `⚠️ Equipment Worn: Capacity capped at 90% until repaired.\n\n` +
+        `Effective capacity: ${effectiveMaxWeight.toFixed(1)}kg\n\n` +
         `Repair now?`,
         [
           {
@@ -520,7 +607,8 @@ export default function GameScreen() {
       Alert.alert(
         '⚠️ Equipment Worn',
         `Durability is ${playerState.durability.toFixed(1)}% (<90%).\n\n` +
-        `Effective capacity reduced to ${effectiveMaxWeight.toFixed(1)}kg (90% of base).\n\n` +
+        `⚠️ Equipment Worn: Capacity capped at 90% until repaired.\n\n` +
+        `Effective capacity: ${effectiveMaxWeight.toFixed(1)}kg\n\n` +
         `Repair now?`,
         [
           {
@@ -920,6 +1008,167 @@ export default function GameScreen() {
         {/* 統計面板 - 自動從 Store 獲取數據 */}
         <StatsPanel />
 
+        {/* ========== 控制面板 ========== */}
+        <View style={styles.debugSection}>
+          <Text style={styles.zoneTitle}>⚙️ 控制面板</Text>
+          
+          {/* 登入天數控制器 */}
+          <View style={styles.controlRow}>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={() => {
+                const currentStreak = sessionState.luckGradient.streak;
+                if (currentStreak > 0) {
+                  sessionState.setLoginDays(currentStreak - 1);
+                }
+              }}
+            >
+              <Text style={styles.controlButtonText}>-</Text>
+            </TouchableOpacity>
+            <Text style={styles.controlLabel}>
+              登入天數: {sessionState.luckGradient.streak}
+            </Text>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={() => {
+                const currentStreak = sessionState.luckGradient.streak;
+                sessionState.setLoginDays(currentStreak + 1);
+              }}
+            >
+              <Text style={styles.controlButtonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* 當前掉落機率表格 */}
+          <View style={styles.dropRateTable}>
+            <Text style={styles.summaryTitle}>📊 當前掉落機率</Text>
+            {(() => {
+              const { calculateItemDropRate } = require('../../src/core/math/luck');
+              const streak = sessionState.luckGradient.streak;
+              const isPathfinder = sessionState.pathfinder.isPathfinder;
+              const isInDeepZone = sessionState.deepZone.isInDeepZone;
+              
+              // 使用 currentT2Chance（考慮衰減）或 undefined（使用傳統計算）
+              const currentT2Chance = sessionState.luckGradient.isDecaying 
+                ? sessionState.luckGradient.currentT2Chance 
+                : undefined;
+              
+              const t1Rate = calculateItemDropRate(1, streak, isPathfinder, isInDeepZone, currentT2Chance);
+              const t2Rate = calculateItemDropRate(2, streak, isPathfinder, isInDeepZone, currentT2Chance);
+              const t3Rate = calculateItemDropRate(3, streak, isPathfinder, isInDeepZone, currentT2Chance);
+              
+              return (
+                <View style={styles.dropRateContent}>
+                  <View style={styles.dropRateRow}>
+                    <Text style={styles.dropRateLabel}>🍞 T1 機率:</Text>
+                    <Text style={styles.dropRateValue}>{t1Rate.toFixed(1)}%</Text>
+                  </View>
+                  <View style={styles.dropRateRow}>
+                    <Text style={styles.dropRateLabel}>🥩 T2 機率:</Text>
+                    <Text style={styles.dropRateValue}>{t2Rate.toFixed(1)}%</Text>
+                    {sessionState.luckGradient.t2Bonus > 0 && !sessionState.luckGradient.isDecaying && (
+                      <Text style={styles.dropRateBonus}>
+                        (+{sessionState.luckGradient.t2Bonus.toFixed(1)}%)
+                      </Text>
+                    )}
+                    {sessionState.luckGradient.isDecaying && (
+                      <Text style={[styles.dropRateBonus, { color: '#F44336' }]}>
+                        (衰減中)
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.dropRateRow}>
+                    <Text style={styles.dropRateLabel}>💎 T3 機率:</Text>
+                    <Text style={styles.dropRateValue}>{t3Rate.toFixed(1)}%</Text>
+                    {isInDeepZone && (
+                      <Text style={styles.dropRateBonus}>(深層領域翻倍)</Text>
+                    )}
+                  </View>
+                  {(isPathfinder || isInDeepZone) && (
+                    <View style={styles.dropRateModifiers}>
+                      {isPathfinder && (
+                        <Text style={styles.modifierText}>📍 開拓者區域: T2 +10%</Text>
+                      )}
+                      {isInDeepZone && (
+                        <Text style={styles.modifierText}>🌊 深層領域: T3 翻倍</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+          </View>
+
+          {/* 庫存摘要 */}
+          <View style={styles.inventorySummary}>
+            <Text style={styles.summaryTitle}>📦 庫存摘要</Text>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryText}>
+                🍞 T1: {inventoryState.items.filter(i => i.tier === 1).length}
+              </Text>
+              <Text style={styles.summaryText}>
+                🥩 T2: {inventoryState.items.filter(i => i.tier === 2).length}
+              </Text>
+              <Text style={styles.summaryText}>
+                💎 T3: {inventoryState.items.filter(i => i.tier === 3).length}
+              </Text>
+            </View>
+          </View>
+
+          {/* 臨時擴容按鈕 */}
+          <TouchableOpacity
+            style={[styles.button, sessionState.isTempExpanded ? styles.buttonActive : styles.buttonInactive]}
+            onPress={async () => {
+              // 如果已經擴容，直接關閉
+              if (sessionState.isTempExpanded) {
+                sessionState.setTempExpanded(false);
+                Alert.alert('臨時擴容已關閉', '容量已恢復正常。');
+                return;
+              }
+              
+              // 檢查廣告上限
+              const canWatchAd = sessionState.triggerRescue('capacity');
+              
+              if (!canWatchAd) {
+                Alert.alert('廣告上限已達', '您已達到今日臨時擴容廣告上限。');
+                return;
+              }
+              
+              // 模擬觀看廣告（實際應用中應整合真實的廣告 SDK）
+              Alert.alert(
+                '觀看廣告',
+                '即將播放 30 秒廣告...',
+                [{ text: '確定' }]
+              );
+              
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              // 啟用臨時擴容
+              sessionState.setTempExpanded(true);
+              
+              // 獲取更新後的容量
+              const newCapacity = playerState.getEffectiveMaxWeight();
+              
+              Alert.alert(
+                '✅ 臨時擴容已啟用',
+                `容量已臨時增加 50%！\n\n` +
+                `新容量：${newCapacity.toFixed(1)}kg\n` +
+                `（基礎 ${playerState.baseMaxWeight}kg × 1.5）`,
+                [{ text: '確定' }]
+              );
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>
+              📺 {sessionState.isTempExpanded ? '關閉臨時擴容' : '觀看廣告：臨時擴容 +50%'}
+            </Text>
+            <Text style={styles.buttonSubtext}>
+              當前容量: {playerState.getEffectiveMaxWeight().toFixed(1)}kg
+              {sessionState.isTempExpanded && ' (已擴容)'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ========== Zone A: Survival (Existing) ========== */}
         <View style={styles.debugSection}>
           <Text style={styles.zoneTitle}>Zone A: Survival</Text>
@@ -1058,6 +1307,249 @@ export default function GameScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* ========== 🧪 新功能測試區域 ========== */}
+        <View style={styles.debugSection}>
+          <Text style={styles.zoneTitle}>🧪 新功能測試</Text>
+          <Text style={styles.zoneSubtitle}>測試已完成的核心功能</Text>
+
+          {/* 廣告救援測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={() => {
+              // 測試腎上腺素救援（空間足夠但體力不足）
+              const testItem: Item = {
+                id: `test-item-${Date.now()}`,
+                tier: 2,
+                weight: ITEM_WEIGHTS.T2,
+                value: ITEM_VALUES.T2,
+                pickupCost: ITEM_PICKUP_COSTS.T2,
+                timestamp: Date.now(),
+                restoreStamina: ITEM_CONSUME_RESTORE.T2,
+              };
+              
+              // 設置體力不足
+              playerState.updateStamina(-playerState.stamina + 5); // 只保留 5 體力
+              
+              setAdRescueItem(testItem);
+              setAdRescueType('adrenaline');
+              setAdRescueVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>💉 測試：腎上腺素救援</Text>
+            <Text style={styles.buttonSubtext}>空間足夠但體力不足時觸發</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={() => {
+              // 測試臨時擴容救援（背包滿倉）
+              const testItem: Item = {
+                id: `test-item-${Date.now()}`,
+                tier: 3,
+                weight: ITEM_WEIGHTS.T3,
+                value: ITEM_VALUES.T3,
+                pickupCost: ITEM_PICKUP_COSTS.T3,
+                timestamp: Date.now(),
+                restoreStamina: ITEM_CONSUME_RESTORE.T3,
+              };
+              
+              // 填滿背包（添加多個 T1 物品直到接近滿倉）
+              const currentWeight = inventoryState.totalWeight;
+              const maxWeight = playerState.maxWeight;
+              const spaceLeft = maxWeight - currentWeight;
+              
+              if (spaceLeft > ITEM_WEIGHTS.T1) {
+                // 添加多個 T1 物品填滿背包
+                let remainingSpace = spaceLeft;
+                while (remainingSpace >= ITEM_WEIGHTS.T1) {
+                  const fillItem: Item = {
+                    id: `fill-item-${Date.now()}-${Math.random()}`,
+                    tier: 1,
+                    weight: ITEM_WEIGHTS.T1,
+                    value: ITEM_VALUES.T1,
+                    pickupCost: ITEM_PICKUP_COSTS.T1,
+                    timestamp: Date.now(),
+                    restoreStamina: ITEM_CONSUME_RESTORE.T1,
+                  };
+                  if (inventoryState.addItem(fillItem)) {
+                    remainingSpace -= ITEM_WEIGHTS.T1;
+                  } else {
+                    break; // 無法再添加
+                  }
+                }
+              }
+              
+              setAdRescueItem(testItem);
+              setAdRescueType('temporary_expansion');
+              setAdRescueVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>📦 測試：臨時擴容救援</Text>
+            <Text style={styles.buttonSubtext}>背包滿倉時觸發</Text>
+          </TouchableOpacity>
+
+          {/* 卸貨變現矩陣測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={() => {
+              // 確保有物品可以卸貨
+              if (inventoryState.items.length === 0) {
+                Alert.alert('提示', '請先拾取一些物品再測試卸貨功能');
+                return;
+              }
+              setUnloadModalVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>💰 測試：卸貨變現矩陣</Text>
+            <Text style={styles.buttonSubtext}>M Normal / M Ad / M Info 選項</Text>
+          </TouchableOpacity>
+
+          {/* 每日幸運梯度測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={() => {
+              const sessionStore = useSessionStore.getState();
+              const streak = sessionStore.luckGradient?.streak || 0;
+              const t2Bonus = sessionStore.luckGradient?.t2Bonus || 0;
+              
+              // 模擬增加簽到天數
+              sessionStore.updateStreak();
+              
+              const newStreak = useSessionStore.getState().luckGradient.streak;
+              const newT2Bonus = useSessionStore.getState().luckGradient.t2Bonus;
+              
+              Alert.alert(
+                '每日幸運梯度測試',
+                `簽到天數：${streak} → ${newStreak}\n` +
+                `T2 加成：${t2Bonus.toFixed(1)}% → ${newT2Bonus.toFixed(1)}%\n\n` +
+                `基礎 T2 機率：14%\n` +
+                `最終 T2 機率：${(14 + newT2Bonus).toFixed(1)}%`,
+                [{ text: '確定' }]
+              );
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>🍀 測試：每日幸運梯度</Text>
+            <Text style={styles.buttonSubtext}>簽到天數影響 T2 掉落率</Text>
+          </TouchableOpacity>
+
+          {/* 深層領域檢測測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={() => {
+              const sessionStore = useSessionStore.getState();
+              const currentDistance = sessionStore.sessionDistance;
+              const isInDeepZone = sessionStore.deepZone?.isInDeepZone || false;
+              
+              // 模擬增加距離到 10km
+              if (currentDistance < 10) {
+                sessionStore.addDistance(10 - currentDistance);
+                sessionStore.checkDeepZone();
+              }
+              
+              const newDistance = useSessionStore.getState().sessionDistance;
+              const newIsInDeepZone = useSessionStore.getState().deepZone.isInDeepZone;
+              const t3Multiplier = useSessionStore.getState().deepZone.t3Multiplier;
+              
+              Alert.alert(
+                '深層領域檢測測試',
+                `會話距離：${currentDistance.toFixed(2)}km → ${newDistance.toFixed(2)}km\n` +
+                `深層領域：${isInDeepZone ? '是' : '否'} → ${newIsInDeepZone ? '是' : '否'}\n` +
+                `T3 倍率：${t3Multiplier}x\n\n` +
+                `${newIsInDeepZone ? '✅ 已進入深層領域！T3 掉落率翻倍（1% → 2%）' : '⏳ 尚未進入深層領域（需要 10km）'}`,
+                [{ text: '確定' }]
+              );
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>🌊 測試：深層領域檢測</Text>
+            <Text style={styles.buttonSubtext}>10km 時 T3 掉落率翻倍</Text>
+          </TouchableOpacity>
+
+          {/* GPS 位置追蹤測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={async () => {
+              try {
+                const hasPermission = await locationService.checkPermissions();
+                if (!hasPermission) {
+                  const granted = await locationService.requestPermissions();
+                  if (!granted) {
+                    Alert.alert('權限被拒絕', '需要位置權限才能測試 GPS 功能');
+                    return;
+                  }
+                }
+                
+                const location = await locationService.getCurrentLocation();
+                if (location) {
+                  Alert.alert(
+                    'GPS 位置追蹤測試',
+                    `緯度：${location.latitude.toFixed(6)}\n` +
+                    `經度：${location.longitude.toFixed(6)}\n` +
+                    `精度：${location.accuracy ? `${location.accuracy.toFixed(0)}m` : '未知'}\n` +
+                    `速度：${location.speed ? `${(location.speed * 3.6).toFixed(2)} km/h` : '未知'}`,
+                    [{ text: '確定' }]
+                  );
+                } else {
+                  Alert.alert('錯誤', '無法獲取位置信息');
+                }
+              } catch (error) {
+                Alert.alert('錯誤', `GPS 測試失敗：${error}`);
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>📍 測試：GPS 位置追蹤</Text>
+            <Text style={styles.buttonSubtext}>獲取當前位置信息</Text>
+          </TouchableOpacity>
+
+          {/* 持久化存儲測試 */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonTest]}
+            onPress={async () => {
+              try {
+                // 保存測試數據
+                const testData = {
+                  timestamp: Date.now(),
+                  playerStamina: playerState.stamina,
+                  playerDurability: playerState.durability,
+                  inventoryCount: inventoryState.items.length,
+                };
+                
+                await saveData(STORAGE_KEYS.PLAYER_STATE, testData);
+                
+                // 讀取測試數據
+                const loadedData = await loadData<typeof testData>(STORAGE_KEYS.PLAYER_STATE);
+                
+                if (loadedData) {
+                  Alert.alert(
+                    '持久化存儲測試',
+                    `✅ 保存成功！\n\n` +
+                    `保存時間：${new Date(testData.timestamp).toLocaleString()}\n` +
+                    `體力：${testData.playerStamina}\n` +
+                    `耐久度：${testData.playerDurability}\n` +
+                    `物品數量：${testData.inventoryCount}\n\n` +
+                    `✅ 讀取成功！\n` +
+                    `讀取時間：${new Date(loadedData.timestamp).toLocaleString()}`,
+                    [{ text: '確定' }]
+                  );
+                } else {
+                  Alert.alert('錯誤', '讀取失敗：數據為空');
+                }
+              } catch (error) {
+                Alert.alert('錯誤', `持久化存儲測試失敗：${error}`);
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>💾 測試：持久化存儲</Text>
+            <Text style={styles.buttonSubtext}>保存和讀取遊戲狀態</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* 狀態信息面板 */}
         <View style={styles.infoSection}>
           <Text style={styles.infoTitle}>當前狀態</Text>
@@ -1085,6 +1577,30 @@ export default function GameScreen() {
       {/* Ghost Overlay - 必須在最後，以便覆蓋所有內容 */}
       {/* 組件內部自動從 Store 獲取 isGhost 狀態 */}
       <GhostOverlay />
+
+      {/* 廣告救援模態框 */}
+      <AdRescueModal
+        visible={adRescueVisible}
+        type={adRescueType}
+        item={adRescueItem}
+        onClose={() => {
+          setAdRescueVisible(false);
+          setAdRescueItem(null);
+        }}
+        onSuccess={() => {
+          Alert.alert('成功', '廣告救援測試完成！');
+        }}
+      />
+
+      {/* 卸貨變現模態框 */}
+      <UnloadModal
+        visible={unloadModalVisible}
+        onClose={() => setUnloadModalVisible(false)}
+        onSuccess={(revenue) => {
+          Alert.alert('成功', `卸貨完成！收益：$${revenue.toFixed(2)} SOLE`);
+        }}
+        isGoldenMistNode={false} // 可以改為 true 來測試 M Info
+      />
     </SafeAreaView>
   );
 }
@@ -1200,6 +1716,109 @@ const styles = StyleSheet.create({
   },
   buttonLab: {
     backgroundColor: '#9C27B0',
+  },
+  buttonTest: {
+    backgroundColor: '#00BCD4',
+  },
+  buttonActive: {
+    backgroundColor: '#4CAF50',
+  },
+  buttonInactive: {
+    backgroundColor: '#9E9E9E',
+  },
+  controlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    gap: 12,
+  },
+  controlButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2196F3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  controlButtonText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  controlLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    minWidth: 120,
+    textAlign: 'center',
+  },
+  inventorySummary: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  summaryTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 8,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  summaryText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  dropRateTable: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  dropRateContent: {
+    marginTop: 8,
+  },
+  dropRateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  dropRateLabel: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+    flex: 1,
+  },
+  dropRateValue: {
+    fontSize: 14,
+    color: '#2196F3',
+    fontWeight: '700',
+    minWidth: 60,
+    textAlign: 'right',
+  },
+  dropRateBonus: {
+    fontSize: 12,
+    color: '#4CAF50',
+    fontWeight: '500',
+    marginLeft: 8,
+  },
+  dropRateModifiers: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  modifierText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    marginBottom: 4,
   },
   buttonText: {
     fontSize: 16,

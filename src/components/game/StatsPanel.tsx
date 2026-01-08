@@ -13,6 +13,13 @@ export const StatsPanel: React.FC = () => {
   // 從 Store 獲取狀態
   const playerState = usePlayerStore();
   const sessionState = useSessionStore();
+  
+  // 訂閱 isTempExpanded 狀態以確保組件在臨時擴容切換時重新渲染
+  // 即使不直接使用，調用 hook 也會確保響應性
+  const isTempExpanded = sessionState.isTempExpanded;
+  
+  // 獲取動態有效最大容量（考慮臨時擴容和 90% 閾值）
+  const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
 
   // 計算當前速度（從 sessionStore 獲取）
   // 如果 sessionStore 沒有 currentSpeed，則顯示 0
@@ -41,7 +48,7 @@ export const StatsPanel: React.FC = () => {
         <View style={styles.statCard}>
           <Text style={styles.statLabel}>負重</Text>
           <Text style={styles.statValue}>
-            {playerState.currentWeight.toFixed(1)} / {playerState.maxWeight.toFixed(1)}
+            {playerState.currentWeight.toFixed(1)} / {effectiveMaxWeight.toFixed(1)}
           </Text>
           <Text style={styles.statUnit}>kg</Text>
         </View>

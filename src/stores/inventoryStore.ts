@@ -46,6 +46,19 @@ interface InventoryActions {
   removeItem: (id: string) => void;
   
   /**
+   * 檢查是否可以拾取物品
+   * 
+   * 驗證流程：
+   * 1. 檢查是否處於 Ghost Mode 或 Immobilized
+   * 2. 檢查容量（使用有效最大容量，考慮階層閾值）
+   * 3. 檢查體力
+   * 
+   * @param item - 要檢查的物品
+   * @returns 是否可以拾取
+   */
+  canPickup: (item: Item) => boolean;
+  
+  /**
    * 消耗物品（食用）
    * 
    * 移除物品並根據 Tier 恢復體力：
@@ -89,6 +102,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     }
     
     // FIRST: 檢查容量（使用有效最大容量，考慮階層閾值）
+    // getEffectiveMaxWeight 現在會自動從 sessionStore 獲取臨時擴容狀態
     const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
     const wouldExceedWeight = totalWeight + item.weight > effectiveMaxWeight;
     
@@ -112,6 +126,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     
     // FIRST: 檢查容量（使用有效最大容量，考慮階層閾值）
     // 驗證：currentWeight + item.weight <= effectiveMaxWeight
+    // getEffectiveMaxWeight 現在會自動從 sessionStore 獲取臨時擴容狀態
     const effectiveMaxWeight = playerState.getEffectiveMaxWeight();
     const wouldExceedWeight = totalWeight + item.weight > effectiveMaxWeight;
     

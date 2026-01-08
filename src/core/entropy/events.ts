@@ -49,7 +49,7 @@ export type EntropyEventType =
 export interface LootResult {
   tier: 1 | 2 | 3;
   success: boolean;
-  reason?: 'overload' | 'insufficient_stamina' | 'ghost_mode' | 'immobilized' | 'OVERLOAD_SOLVABLE' | 'OVERLOAD_IMPOSSIBLE' | 't3_rescue_available';
+  reason?: 'overload' | 'insufficient_stamina' | 'ghost_mode' | 'immobilized' | 'OVERLOAD_SOLVABLE' | 'OVERLOAD_IMPOSSIBLE' | 't3_rescue_available' | 'ad_rescue_available' | 'unknown';
   itemId?: string;
   // 智能超載交換相關字段
   item?: Item;  // 等待拾取的物品

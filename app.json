@@ -11,7 +11,13 @@
     ],
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "ios": {
+      "bundleIdentifier": "com.solefood.mvp"
+    },
+    "android": {
+      "package": "com.solefood.mvp"
+    }
   }
 }
 

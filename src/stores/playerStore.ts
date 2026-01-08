@@ -73,17 +73,20 @@ interface PlayerActions {
   setWeight: (weight: number) => void;
   
   /**
-   * 獲取有效最大容量（階層閾值機制）
+   * 獲取有效最大容量（階層閾值機制 + 臨時擴容）
    * 
    * 根據白皮書 v8.7：階層閾值（Forgiveness Mechanic）
    * - 耐久度 >= 90%：使用完整容量
    * - 耐久度 < 90%：容量降至 90%（警告機制）
    * 
-   * 這避免了微小的懲罰讓玩家感到煩惱
+   * 考慮臨時擴容：
+   * - 如果啟用臨時擴容：基礎容量 × 1.5
+   * - 然後應用 90% 閾值規則
    * 
+   * @param isTempExpanded - 是否啟用臨時擴容（可選，默認為 false）
    * @returns 有效最大容量（kg）
    */
-  getEffectiveMaxWeight: () => number;
+  getEffectiveMaxWeight: (isTempExpanded?: boolean) => number;
 }
 
 type PlayerStore = PlayerState & PlayerActions;
@@ -237,13 +240,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
   
   /**
-   * 獲取有效最大容量（階層閾值機制）
+   * 獲取有效最大容量（階層閾值機制 + 臨時擴容）
    * 
    * 根據白皮書 v8.7：階層閾值（Forgiveness Mechanic）
    * - 耐久度 >= 90%：使用完整容量
    * - 耐久度 < 90%：容量降至 90%（警告機制）
    * 
-   * 這避免了微小的懲罰讓玩家感到煩惱
+   * 考慮臨時擴容：
+   * - 如果啟用臨時擴容：基礎容量 × 1.5
+   * - 然後應用 90% 閾值規則
+   * 
+   * 此方法會自動從 sessionStore 獲取臨時擴容狀態，確保響應性
    * 
    * @returns 有效最大容量（kg）
    */
@@ -251,12 +258,22 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const state = get();
     const threshold = 90; // 階層閾值（90%）
     
-    // 如果耐久度 < 90%，有效容量降至 90%
+    // 從 sessionStore 獲取臨時擴容狀態（動態獲取，確保響應性）
+    // 使用 require 避免循環依賴
+    const { useSessionStore } = require('./sessionStore');
+    const sessionState = useSessionStore.getState();
+    const isTempExpanded = sessionState.isTempExpanded || false;
+    
+    // 1. 計算增強後的基礎容量（考慮臨時擴容）
+    const base = state.baseMaxWeight;
+    const calculatedBase = isTempExpanded ? base * 1.5 : base;
+    
+    // 2. 應用 90% 階層閾值規則
     if (state.durability < threshold) {
-      return state.baseMaxWeight * 0.9;
+      return calculatedBase * 0.9;
     }
     
     // 否則使用完整容量
-    return state.baseMaxWeight;
+    return calculatedBase;
   },
 }));

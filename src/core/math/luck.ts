@@ -25,17 +25,22 @@ export function calculateLuckGradient(streak: number): number {
  * @param baseRate 基礎機率（%）
  * @param streak 連續簽到天數
  * @param isPathfinder 是否為開拓者區域
+ * @param currentT2Chance 當前 T2 機率（考慮衰減，可選）
  * @returns 最終 T2 機率（%）
  */
 export function calculateT2DropRate(
   baseRate: number,
   streak: number,
-  isPathfinder: boolean = false
+  isPathfinder: boolean = false,
+  currentT2Chance?: number
 ): number {
-  let rate = baseRate;
+  // 如果提供了 currentT2Chance（考慮衰減），使用它作為基礎
+  let rate = currentT2Chance !== undefined ? currentT2Chance : baseRate;
   
-  // 應用幸運梯度
-  rate += calculateLuckGradient(streak);
+  // 如果沒有提供 currentT2Chance，應用傳統的幸運梯度
+  if (currentT2Chance === undefined) {
+    rate += calculateLuckGradient(streak);
+  }
   
   // 應用開拓者紅利
   if (isPathfinder) {
@@ -71,13 +76,15 @@ export function calculateT3DropRate(
  * @param streak 連續簽到天數
  * @param isPathfinder 是否為開拓者區域
  * @param isInDeepZone 是否在深層領域
+ * @param currentT2Chance 當前 T2 機率（考慮衰減，可選）
  * @returns 掉落機率（%）
  */
 export function calculateItemDropRate(
   tier: 1 | 2 | 3,
   streak: number = 0,
   isPathfinder: boolean = false,
-  isInDeepZone: boolean = false
+  isInDeepZone: boolean = false,
+  currentT2Chance?: number
 ): number {
   switch (tier) {
     case 1:
@@ -85,7 +92,8 @@ export function calculateItemDropRate(
       const t2Rate = calculateT2DropRate(
         ITEM_DISTRIBUTION.T2_PERCENTAGE,
         streak,
-        isPathfinder
+        isPathfinder,
+        currentT2Chance
       );
       const t3Rate = calculateT3DropRate(
         ITEM_DISTRIBUTION.T3_PERCENTAGE,
@@ -97,7 +105,8 @@ export function calculateItemDropRate(
       return calculateT2DropRate(
         ITEM_DISTRIBUTION.T2_PERCENTAGE,
         streak,
-        isPathfinder
+        isPathfinder,
+        currentT2Chance
       );
       
     case 3:

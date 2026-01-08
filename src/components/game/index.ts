@@ -7,4 +7,6 @@ export { StaminaBar } from './StaminaBar';
 export { DurabilityBar } from './DurabilityBar';
 export { StatsPanel } from './StatsPanel';
 export { GhostOverlay } from './GhostOverlay';
+export { AdRescueModal } from './AdRescueModal';
+export { UnloadModal } from './UnloadModal';
 

@@ -22,6 +22,7 @@ import { calculateHygieneDecay } from '../math/hygiene';
 // 注意：calculateContamination 不再在此處使用，衛生值污染改為卸貨時結算
 import { ANTI_CHEAT, ITEM_DISTRIBUTION, ITEM_WEIGHTS, ITEM_VALUES, ITEM_PICKUP_COSTS, ITEM_CONSUME_RESTORE } from '../../utils/constants';
 import { Item, ItemTier } from '../../types/item';
+import { calculateItemDropRate } from '../math/luck';
 
 /**
  * 熵計算引擎類
@@ -477,36 +478,15 @@ class EntropyEngine {
         // 但為了完整性，我們仍然處理這個分支
         // 注意：這個分支實際上不會被執行，因為 canPickup 已經驗證了體力
         console.warn(`[EntropyEngine] Unexpected branch: Stamina sufficient but item not picked up`);
+        
+        // 返回 0（無體力變化），因為物品尚未被拾取
+        // 體力變化將在廣告救援成功後由 UI 層處理
+        return 0;
       }
       
-      // 返回 0（無體力變化），因為物品尚未被拾取
-      // 體力變化將在廣告救援成功後由 UI 層處理
+      // 如果到達這裡，說明既不是溢出也不是體力不足
+      // 這不應該發生，但為了安全起見返回 0
       return 0;
-      else if (currentPlayerState.isGhost) {
-        this.emitEvent({
-          type: 'loot_intercept',
-          data: {
-            tier,
-            success: false,
-            reason: 'ghost_mode',
-            itemId: item.id,
-          } as LootResult,
-          timestamp,
-        });
-        return 0; // 無體力變化
-      } else {
-        this.emitEvent({
-          type: 'loot_intercept',
-          data: {
-            tier,
-            success: false,
-            reason: 'immobilized',
-            itemId: item.id,
-          } as LootResult,
-          timestamp,
-        });
-        return 0; // 無體力變化
-      }
     }
     
     // 如果沒有匹配任何分支，返回 0
@@ -517,21 +497,40 @@ class EntropyEngine {
    * RNG 決定物品階層
    * 
    * 根據白皮書 v8.7 第四章：物品矩陣 (85/14/1)
-   * - 85% T1 琥珀粗糖
-   * - 14% T2 翡翠晶糖
-   * - 1% T3 皇室純糖
+   * 考慮所有加成：
+   * - 每日幸運梯度（T2 機率隨 Streak 增加）
+   * - 深層領域（T3 機率翻倍，10km+）
+   * - 開拓者紅利（T2 機率 +10%，灰階區域首拾）
    * 
    * @returns 物品階層 (1, 2, 3)
    */
   private rollItemTier(): ItemTier {
+    const sessionStore = useSessionStore.getState();
+    
+    // 獲取幸運梯度數據
+    const streak = sessionStore.luckGradient?.streak || 0;
+    
+    // 檢查深層領域（10km+）
+    const isInDeepZone = sessionStore.deepZone?.isInDeepZone || false;
+    
+    // 檢查開拓者狀態（需要從當前位置判斷，這裡暫時設為 false）
+    // TODO: 整合 H3 網格系統以判斷開拓者狀態
+    const isPathfinder = false;
+    
+    // 計算最終掉落機率
+    const t1Rate = calculateItemDropRate(1, streak, isPathfinder, isInDeepZone);
+    const t2Rate = calculateItemDropRate(2, streak, isPathfinder, isInDeepZone);
+    const t3Rate = calculateItemDropRate(3, streak, isPathfinder, isInDeepZone);
+    
+    // RNG 決定
     const roll = Math.random() * 100; // 0-100
-
-    if (roll < ITEM_DISTRIBUTION.T1_PERCENTAGE) {
-      return 1; // 85% T1
-    } else if (roll < ITEM_DISTRIBUTION.T1_PERCENTAGE + ITEM_DISTRIBUTION.T2_PERCENTAGE) {
-      return 2; // 14% T2
+    
+    if (roll < t1Rate) {
+      return 1; // T1
+    } else if (roll < t1Rate + t2Rate) {
+      return 2; // T2
     } else {
-      return 3; // 1% T3
+      return 3; // T3
     }
   }
 

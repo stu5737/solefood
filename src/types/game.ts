@@ -75,7 +75,13 @@ export interface LuckGradient {
   streak: number;                  // 連續簽到天數
   t2Bonus: number;                 // T2 機率加成 (%)
   lastActiveDate: string;          // 最後活躍日期 (YYYY-MM-DD)
-  leaveDaysUsed: number;           // 已使用的休假天數
+  lastLoginDate: string;            // 最後登入日期 (YYYY-MM-DD)
+  leaveDaysUsed: number;           // 已使用的休假天數（3天緩衝）
+  consecutiveMissedDays: number;   // 連續錯過的天數
+  isFrozen: boolean;                // 是否處於凍結狀態（使用廣告救援）
+  isDecaying: boolean;              // 是否處於衰減模式
+  decayStartDate: string | null;   // 衰減開始日期
+  currentT2Chance: number;         // 當前 T2 機率（考慮衰減）
 }
 
 /**
