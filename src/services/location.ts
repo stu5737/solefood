@@ -131,9 +131,10 @@ class LocationService {
           };
 
           // 計算距離（如果存在上一個位置）
+          // calculateDistance 返回公里，需要轉換為米
           let distance = 0;
           if (this.lastLocation) {
-            distance = calculateDistance(
+            const distanceKm = calculateDistance(
               {
                 latitude: this.lastLocation.latitude,
                 longitude: this.lastLocation.longitude,
@@ -143,15 +144,25 @@ class LocationService {
                 longitude: locationData.longitude,
               }
             );
+            distance = distanceKm * 1000; // 轉換為米
           }
 
           // 更新最後位置
           this.lastLocation = locationData;
 
-          // 調用回調（移除 distance > 0 的限制，因為實時地圖需要所有位置更新）
+          // 調用主回調（如果存在）
           if (this.onLocationUpdate) {
             this.onLocationUpdate(locationData, distance);
           }
+
+          // 調用所有訂閱的回調
+          this.locationCallbacks.forEach(cb => {
+            try {
+              cb(locationData, distance);
+            } catch (error) {
+              console.error('[LocationService] Error in location callback:', error);
+            }
+          });
         }
       );
 
@@ -172,6 +183,7 @@ class LocationService {
       this.watchSubscription = null;
       this.lastLocation = null;
       this.onLocationUpdate = undefined;
+      this.locationCallbacks.clear(); // 清除所有訂閱
       console.log('[LocationService] Location tracking stopped');
     }
   }
@@ -179,35 +191,46 @@ class LocationService {
   /**
    * 訂閱位置更新（用於實時地圖）
    * 
-   * 注意：此方法會重用現有的 watchSubscription，如果已經在追蹤則直接返回
+   * 注意：此方法會重用現有的 watchSubscription，如果已經在追蹤則添加回調到鏈中
    * 
    * @param callback - 位置更新回調函數
    * @returns 訂閱對象（可用於取消訂閱）
    */
+  private locationCallbacks: Set<(location: LocationData, distance: number) => void> = new Set();
+
   subscribeToLocationUpdates(
     callback: (location: LocationData, distance: number) => void
   ): { remove: () => void } | null {
-    // 如果已經有訂閱，設置新的回調
+    // 添加回調到集合中
+    this.locationCallbacks.add(callback);
+
+    // 如果已經有訂閱，直接返回
     if (this.watchSubscription) {
-      this.onLocationUpdate = callback;
       return {
         remove: () => {
-          // 不停止追蹤，只是移除回調
-          this.onLocationUpdate = undefined;
+          this.locationCallbacks.delete(callback);
         },
       };
     }
 
-    // 如果沒有訂閱，啟動追蹤
-    this.startTracking(callback).catch((error) => {
+    // 如果沒有訂閱，啟動追蹤（使用統一回調分發給所有訂閱者）
+    this.startTracking((location, distance) => {
+      // 調用所有訂閱的回調
+      this.locationCallbacks.forEach(cb => {
+        try {
+          cb(location, distance);
+        } catch (error) {
+          console.error('[LocationService] Error in location callback:', error);
+        }
+      });
+    }).catch((error) => {
       console.error('[LocationService] Failed to start tracking for subscription:', error);
     });
 
     // 返回取消訂閱函數
     return {
       remove: () => {
-        // 只移除回調，不停止追蹤（因為可能還有其他地方在使用）
-        this.onLocationUpdate = undefined;
+        this.locationCallbacks.delete(callback);
       },
     };
   }

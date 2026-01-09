@@ -64,9 +64,17 @@ class GPSHistoryService {
       this.initialize().catch(console.error);
     }
 
-    // 過濾太近的點（減少存儲空間）
-    if (distance < this.MIN_DISTANCE_THRESHOLD && this.history.length > 0) {
-      return;
+    // 記錄第一個點（即使距離為 0）
+    if (this.history.length === 0) {
+      console.log('[GPSHistoryService] Recording first GPS point at:', location.latitude, location.longitude);
+    } else {
+      // 過濾太近的點（減少存儲空間）
+      // 但如果是第一個點或距離足夠大，則記錄
+      if (distance < this.MIN_DISTANCE_THRESHOLD) {
+        // 如果距離太近，不記錄（但第一個點會記錄）
+        console.log('[GPSHistoryService] Point too close, skipping:', distance, 'm');
+        return;
+      }
     }
 
     const point: GPSHistoryPoint = {

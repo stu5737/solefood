@@ -24,6 +24,8 @@ import { useInventoryStore } from '../../src/stores/inventoryStore';
 import { entropyEngine } from '../../src/core/entropy/engine';
 import { executeUnloadSettlement, calculateSettlement } from '../../src/core/game/unloading';
 import { calculateContamination } from '../../src/core/math/maintenance';
+import { getTieredMultiplier } from '../../src/core/math/tiered';
+import { calculateDistance } from '../../src/core/math/distance';
 import type { EntropyEvent, LootResult } from '../../src/core/entropy/events';
 import type { Item } from '../../src/types/item';
 import { ITEM_WEIGHTS, ITEM_VALUES, ITEM_PICKUP_COSTS, ITEM_CONSUME_RESTORE } from '../../src/utils/constants';
@@ -50,8 +52,10 @@ export default function GameScreen() {
   // 戶外模式專用狀態
   const [lastPickedItem, setLastPickedItem] = useState<Item | null>(null);
   const [showInventory, setShowInventory] = useState(false);
-  const [showMap, setShowMap] = useState(false);
+  const [isCollecting, setIsCollecting] = useState(false); // 是否正在採集
   const [isTracking, setIsTracking] = useState(false);
+  const [collectionStartPoint, setCollectionStartPoint] = useState<{ latitude: number; longitude: number } | null>(null); // 採集起點
+  const [collectionEndPoint, setCollectionEndPoint] = useState<{ latitude: number; longitude: number } | null>(null); // 採集終點
   const pickupNotificationOpacity = useRef(new Animated.Value(0)).current;
   const previousItemCount = useRef(inventoryState.items.length);
   
@@ -576,10 +580,8 @@ export default function GameScreen() {
     };
   }, []);
 
-  // ========== GPS 追蹤與探索系統整合 ==========
+  // ========== 初始化服務（僅初始化，不啟動追蹤）==========
   useEffect(() => {
-    let isMounted = true;
-
     // 初始化探索服務和 GPS 歷史服務
     const initializeServices = async () => {
       try {
@@ -592,38 +594,91 @@ export default function GameScreen() {
     };
 
     initializeServices();
+  }, []);
 
-    // 開始 GPS 追蹤
-    const startGPSTracking = async () => {
-      try {
-        const started = await locationService.startTracking((location, distance) => {
-          if (!isMounted) return;
+  // ========== 切換採集狀態 ==========
+  const handleToggleCollection = async () => {
+    if (!isCollecting) {
+      // 開始採集
+      // 1. 請求 GPS 權限
+      const hasPermission = await locationService.checkPermissions();
+      if (!hasPermission) {
+        const granted = await locationService.requestPermissions();
+        if (!granted) {
+          Alert.alert('需要位置權限', '請允許應用訪問您的位置以開始採集。');
+          return;
+        }
+      }
 
-          // 驗證 GPS 數據
-          const lastLocation = locationService.getLastLocation();
-          const validation = locationService.validateGPSData(
-            location,
-            lastLocation || undefined
-          );
+      // 2. 獲取初始位置作為起點
+      const initialLocation = await locationService.getCurrentLocation();
+      if (initialLocation) {
+        setCollectionStartPoint({
+          latitude: initialLocation.latitude,
+          longitude: initialLocation.longitude,
+        });
+        console.log('[GameScreen] Collection started at:', initialLocation.latitude, initialLocation.longitude);
+      }
 
-          if (!validation.valid) {
-            console.warn('[GameScreen] Invalid GPS data:', validation.reason);
-            return;
+      // 3. 啟動 GPS 追蹤（使用統一的回調處理所有邏輯）
+      // 在回調外部定義 calculateDistance 的引用，確保作用域正確
+      const calcDistance = calculateDistance;
+      const started = await locationService.startTracking((location, distance) => {
+        console.log('[GameScreen] GPS update received:', {
+          lat: location.latitude,
+          lng: location.longitude,
+          distance: distance,
+          speed: location.speed,
+          timestamp: location.timestamp,
+        });
+
+        // 驗證 GPS 數據
+        const lastLocation = locationService.getLastLocation();
+        const validation = locationService.validateGPSData(
+          location,
+          lastLocation || undefined
+        );
+
+        if (!validation.valid) {
+          console.warn('[GameScreen] Invalid GPS data:', validation.reason);
+          return;
+        }
+
+        // 記錄到 GPS 歷史服務（每個點都記錄，即使距離為 0）
+        gpsHistoryService.addPoint(location, distance);
+        console.log('[GameScreen] GPS point added to history, total points:', gpsHistoryService.getHistoryCount());
+
+        // 記錄造訪區域
+        const h3Index = explorationService.recordVisit(location.latitude, location.longitude);
+
+        // 檢查是否為開拓者區域
+        sessionState.checkPathfinder(location.latitude, location.longitude);
+
+        // 計算距離：如果有起點且距離為 0，計算與起點的距離
+        let actualDistance = distance; // distance 已經是米（從 locationService 返回）
+        // 使用閉包中的 collectionStartPoint（通過 setState 獲取最新值）
+        const currentStartPoint = collectionStartPoint; // 使用當前狀態值
+        if (currentStartPoint) {
+          if (distance === 0) {
+            // 如果距離為 0（可能是第一個點），計算與起點的距離
+            // calcDistance 返回公里，需要轉換為米
+            const distanceKm = calcDistance(
+              { latitude: currentStartPoint.latitude, longitude: currentStartPoint.longitude },
+              { latitude: location.latitude, longitude: location.longitude }
+            );
+            actualDistance = distanceKm * 1000; // 轉換為米
+            console.log('[GameScreen] Calculated distance from start point:', actualDistance, 'm');
           }
+        }
 
-          // 更新開拓者狀態
-          const isPathfinder = sessionState.checkPathfinder(
-            location.latitude,
-            location.longitude
-          );
-
-          if (isPathfinder) {
-            console.log('[GameScreen] Pathfinder zone detected! T2 drop rate +10%');
-          }
-
+        // 只有當距離 > 0 時才觸發移動事件（避免原地不動時觸發）
+        if (actualDistance > 0) {
+          const distanceKm = actualDistance / 1000; // 轉換為 km
+          console.log('[GameScreen] Processing movement:', distanceKm, 'km');
+          
           // 觸發移動事件（整合到遊戲循環）
           entropyEngine.processMovement({
-            distance: distance / 1000, // 轉換為 km
+            distance: distanceKm,
             speed: location.speed ? location.speed * 3.6 : undefined, // 轉換為 km/h
             timestamp: location.timestamp,
             gpsLocation: {
@@ -633,29 +688,39 @@ export default function GameScreen() {
               speed: location.speed,
             },
           });
-        });
-
-        if (started) {
-          console.log('[GameScreen] GPS tracking started');
         } else {
-          console.warn('[GameScreen] Failed to start GPS tracking');
+          console.log('[GameScreen] Distance is 0, skipping movement event');
         }
-      } catch (error) {
-        console.error('[GameScreen] Error starting GPS tracking:', error);
+      });
+
+      if (started) {
+        setIsCollecting(true);
+        setIsTracking(true);
+        setCollectionEndPoint(null); // 清除之前的終點
+        Alert.alert('開始採集', 'GPS 追蹤已啟動，開始記錄軌跡。');
+      } else {
+        Alert.alert('啟動失敗', '無法啟動 GPS 追蹤，請檢查位置權限。');
       }
-    };
-
-    startGPSTracking();
-
-    // 清理函數：組件卸載時停止 GPS 追蹤
-    return () => {
-      isMounted = false;
-      locationService.stopTracking();
+    } else {
+      // 停止採集
+      setIsCollecting(false);
+      
+      // 記錄終點位置
+      const finalLocation = await locationService.getCurrentLocation();
+      if (finalLocation) {
+        setCollectionEndPoint({
+          latitude: finalLocation.latitude,
+          longitude: finalLocation.longitude,
+        });
+        console.log('[GameScreen] Collection ended at:', finalLocation.latitude, finalLocation.longitude);
+      }
+      
       // 強制保存 GPS 歷史
-      gpsHistoryService.forceSave().catch(console.error);
-      console.log('[GameScreen] GPS tracking stopped');
-    };
-  }, [sessionState]);
+      await gpsHistoryService.forceSave();
+      
+      Alert.alert('停止採集', '軌跡已保存。');
+    }
+  };
 
   // 調試功能：模擬移動 - 步行 100m
   const simulateWalk = () => {
@@ -1124,222 +1189,197 @@ export default function GameScreen() {
       </View>
 
       {isOutdoorMode ? (
-        // ========== 戶外模式 UI ==========
-        <View style={outdoorStyles.container}>
-          {/* 1. 頂部狀態條（固定） */}
-          <View style={outdoorStyles.topBar}>
-            {/* GPS 狀態指示器 */}
-            <View style={outdoorStyles.gpsIndicator}>
-              <Text style={outdoorStyles.gpsText}>
-                {isTracking ? '🟢 GPS' : '🔴 GPS'}
+        // ========== 工業風戶外模式 UI ==========
+        <View style={industrialStyles.container}>
+          {/* ========== 頂部狀態列 (Status Bar) ========== */}
+          <View style={industrialStyles.topStatusBar}>
+            {/* 左側：體力條 */}
+            <View style={industrialStyles.staminaSection}>
+              <Text style={industrialStyles.statusLabel}>⚡ 體力</Text>
+              <View style={industrialStyles.progressBarContainer}>
+                <View 
+                  style={[
+                    industrialStyles.progressBar,
+                    { 
+                      width: `${(playerState.stamina / playerState.maxStamina) * 100}%`,
+                      backgroundColor: playerState.stamina < 20 ? '#F44336' : '#4CAF50'
+                    }
+                  ]} 
+                />
+              </View>
+              <Text style={industrialStyles.statusValue}>
+                {Math.round(playerState.stamina)}/{playerState.maxStamina}
               </Text>
             </View>
+
+            {/* 中間：GPS 狀態 */}
+            <View style={industrialStyles.gpsStatus}>
+              <Text style={[
+                industrialStyles.gpsIndicator, 
+                isCollecting && industrialStyles.gpsActive
+              ]}>
+                {isCollecting ? '🟢 採集中' : '🔴 待機'}
+              </Text>
+            </View>
+
+            {/* 右側：錢包 */}
+            <View style={industrialStyles.walletSection}>
+              <Text style={industrialStyles.walletLabel}>💰</Text>
+              <Text style={industrialStyles.walletValue}>
+                ${sessionState.estimatedValue.toFixed(0)}
+              </Text>
+            </View>
+          </View>
+
+          {/* ========== 中央地圖區域 (The Grid) ========== */}
+          <View style={industrialStyles.mapContainer}>
+            <RealTimeMap 
+              followUser={isCollecting}
+              showTrail={isCollecting}
+              height={400}
+              isCollecting={isCollecting}
+            />
             
-            {/* 開拓者狀態 */}
+            {/* 地圖覆蓋層：未開始採集時的提示 */}
+            {!isCollecting && (
+              <View style={industrialStyles.mapOverlay}>
+                <Text style={industrialStyles.mapOverlayText}>
+                  點擊「開始採集」開始記錄軌跡
+                </Text>
+              </View>
+            )}
+
+            {/* 開拓者區域標記 */}
             {sessionState.pathfinder.isPathfinder && (
-              <View style={outdoorStyles.pathfinderBadge}>
-                <Text style={outdoorStyles.pathfinderText}>🗺️ 開拓者區域</Text>
+              <View style={industrialStyles.pathfinderBadge}>
+                <Text style={industrialStyles.pathfinderText}>🗺️ 開拓者區域</Text>
               </View>
             )}
           </View>
 
-          <ScrollView 
-            style={outdoorStyles.scrollView}
-            contentContainerStyle={outdoorStyles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* 2. 主要狀態顯示區域（大號顯示） */}
-            <View style={outdoorStyles.mainStats}>
-              {/* 體力條（大號） */}
-              <View style={outdoorStyles.staminaContainer}>
-                <Text style={outdoorStyles.staminaLabel}>體力</Text>
-                <View style={outdoorStyles.progressBarContainer}>
-                  <View 
-                    style={[
-                      outdoorStyles.progressBar, 
-                      { width: `${(playerState.stamina / playerState.maxStamina) * 100}%` }
-                    ]} 
-                  />
-                </View>
-                <Text style={outdoorStyles.staminaValue}>
-                  {Math.round(playerState.stamina)} / {playerState.maxStamina}
-                </Text>
-              </View>
-
-              {/* 負重顯示（大號） */}
-              <View style={outdoorStyles.weightContainer}>
-                <Text style={outdoorStyles.weightLabel}>負重</Text>
-                <Text style={outdoorStyles.weightValue}>
-                  {playerState.currentWeight.toFixed(1)} / {playerState.getEffectiveMaxWeight().toFixed(1)} kg
-                </Text>
-                {sessionState.isTempExpanded && (
-                  <Text style={outdoorStyles.expandedBadge}>✨ 臨時擴容中</Text>
-                )}
-              </View>
-
-              {/* 耐久度狀態（簡化顯示） */}
-              <View style={outdoorStyles.durabilityContainer}>
-                <Text style={outdoorStyles.durabilityLabel}>耐久度</Text>
-                <View style={outdoorStyles.durabilityBar}>
-                  <View 
-                    style={[
-                      outdoorStyles.durabilityFill,
-                      { 
-                        width: `${playerState.durability}%`,
-                        backgroundColor: getDurabilityColor(playerState.durability)
-                      }
-                    ]} 
-                  />
-                </View>
-                <Text style={outdoorStyles.durabilityValue}>
-                  {Math.round(playerState.durability)}%
-                </Text>
-                {playerState.durability < 90 && (
-                  <Text style={outdoorStyles.durabilityWarning}>
-                    ⚠️ 容量降至 {Math.round((require('../../src/core/math/tiered').getTieredMultiplier(playerState.durability) * 100))}%
-                  </Text>
-                )}
-              </View>
+          {/* ========== 核心儀表板 (Payload Dashboard) ========== */}
+          <View style={industrialStyles.dashboard}>
+            {/* 負重儀表板（最重要） */}
+            <View style={[
+              industrialStyles.capacityWidget,
+              playerState.currentWeight >= playerState.getEffectiveMaxWeight() * 0.95 && industrialStyles.capacityWarning
+            ]}>
+              <Text style={industrialStyles.dashboardLabel}>負重</Text>
+              <Text style={[
+                industrialStyles.capacityValue,
+                playerState.currentWeight >= playerState.getEffectiveMaxWeight() * 0.95 && industrialStyles.capacityValueWarning
+              ]}>
+                {playerState.currentWeight.toFixed(1)} / {playerState.getEffectiveMaxWeight().toFixed(1)} kg
+              </Text>
+              {sessionState.isTempExpanded && (
+                <Text style={industrialStyles.expandedBadge}>✨ 臨時擴容中</Text>
+              )}
             </View>
 
-            {/* 3. 實時統計卡片（簡化版） */}
-            <View style={outdoorStyles.statsGrid}>
-              <View style={outdoorStyles.statCard}>
-                <Text style={outdoorStyles.statIcon}>📏</Text>
-                <Text style={outdoorStyles.statValue}>{sessionState.totalDistance.toFixed(2)}</Text>
-                <Text style={outdoorStyles.statUnit}>km</Text>
-              </View>
-              
-              <View style={outdoorStyles.statCard}>
-                <Text style={outdoorStyles.statIcon}>⚡</Text>
-                <Text style={outdoorStyles.statValue}>
-                  {(sessionState as any).currentSpeed?.toFixed(1) || '0.0'}
-                </Text>
-                <Text style={outdoorStyles.statUnit}>km/h</Text>
-              </View>
-              
-              <View style={outdoorStyles.statCard}>
-                <Text style={outdoorStyles.statIcon}>💰</Text>
-                <Text style={outdoorStyles.statValue}>
-                  ${sessionState.estimatedValue.toFixed(0)}
-                </Text>
-                <Text style={outdoorStyles.statUnit}>USD</Text>
-              </View>
-              
-              <View style={outdoorStyles.statCard}>
-                <Text style={outdoorStyles.statIcon}>📦</Text>
-                <Text style={outdoorStyles.statValue}>
-                  {inventoryState.items.length}
-                </Text>
-                <Text style={outdoorStyles.statUnit}>物品</Text>
-              </View>
+            {/* 耐久度儀表 */}
+            <View style={industrialStyles.durabilityWidget}>
+              <Text style={industrialStyles.dashboardLabel}>耐久度</Text>
+              <Text style={[
+                industrialStyles.durabilityValue,
+                playerState.durability < 90 && industrialStyles.durabilityWarning
+              ]}>
+                {Math.round(playerState.durability)}%
+              </Text>
+              <Text style={industrialStyles.multiplierText}>
+                ({getTieredMultiplier(playerState.durability).toFixed(1)}x)
+              </Text>
             </View>
 
-            {/* 4. 庫存摘要（可摺疊） */}
-            <TouchableOpacity 
-              style={outdoorStyles.inventoryCard}
-              onPress={() => setShowInventory(!showInventory)}
-            >
-              <View style={outdoorStyles.inventoryHeader}>
-                <Text style={outdoorStyles.inventoryTitle}>📦 庫存</Text>
-                <Text style={outdoorStyles.inventoryToggle}>
-                  {showInventory ? '▲' : '▼'}
-                </Text>
-              </View>
-              {showInventory && (
-                <View style={outdoorStyles.inventoryContent}>
-                  <View style={outdoorStyles.inventoryRow}>
-                    <Text style={outdoorStyles.inventoryItem}>🍞 T1: {t1Count}</Text>
-                    <Text style={outdoorStyles.inventoryItem}>🥩 T2: {t2Count}</Text>
-                    <Text style={outdoorStyles.inventoryItem}>💎 T3: {t3Count}</Text>
-                  </View>
-                </View>
-              )}
-            </TouchableOpacity>
+            {/* 衛生值儀表 */}
+            <View style={industrialStyles.hygieneWidget}>
+              <Text style={industrialStyles.dashboardLabel}>衛生值</Text>
+              <Text style={[
+                industrialStyles.hygieneValue,
+                playerState.hygiene < 90 && industrialStyles.hygieneWarning
+              ]}>
+                {Math.round(playerState.hygiene)}%
+              </Text>
+              <Text style={industrialStyles.multiplierText}>
+                ({getTieredMultiplier(playerState.hygiene).toFixed(1)}x)
+              </Text>
+            </View>
+          </View>
 
-            {/* 5. 實時地圖（可摺疊） */}
-            <TouchableOpacity 
-              style={outdoorStyles.mapCard}
-              onPress={() => setShowMap(!showMap)}
-            >
-              <View style={outdoorStyles.mapCardHeader}>
-                <Text style={outdoorStyles.mapCardTitle}>🗺️ 實時地圖</Text>
-                <Text style={outdoorStyles.mapCardToggle}>
-                  {showMap ? '▲' : '▼'}
-                </Text>
-              </View>
-              {showMap && (
-                <View style={outdoorStyles.mapCardContent}>
-                  <RealTimeMap 
-                    followUser={true}
-                    showTrail={true}
-                    height={300}
-                  />
-                </View>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
-
-          {/* 6. 底部操作按鈕（固定位置，大號按鈕） */}
-          <View style={outdoorStyles.bottomActions}>
-            {/* 臨時擴容按鈕 */}
-            {!sessionState.isTempExpanded && (
-              <TouchableOpacity
-                style={[outdoorStyles.actionButton, outdoorStyles.expandButton]}
-                onPress={async () => {
-                  const canWatchAd = sessionState.triggerRescue('capacity');
-                  if (!canWatchAd) {
-                    Alert.alert('廣告上限已達', '您已達到今日臨時擴容廣告上限。');
-                    return;
-                  }
-                  Alert.alert('觀看廣告', '即將播放 30 秒廣告...', [{ text: '確定' }]);
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  sessionState.setTempExpanded(true);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={outdoorStyles.actionButtonText}>📺 臨時擴容 +50%</Text>
-                <Text style={outdoorStyles.actionButtonSubtext}>
-                  {sessionState.adCaps?.capacity?.used || 0} / {sessionState.adCaps?.capacity?.cap || 3} 次
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* 卸貨按鈕（主要操作） */}
+          {/* ========== 底部操作區 (Action Zone) ========== */}
+          <View style={industrialStyles.actionZone}>
+            {/* 開始/停止採集按鈕（主要操作） */}
             <TouchableOpacity
               style={[
-                outdoorStyles.actionButton, 
-                outdoorStyles.unloadButton,
-                inventoryState.items.length === 0 && outdoorStyles.actionButtonDisabled
+                industrialStyles.primaryButton,
+                isCollecting ? industrialStyles.stopButton : industrialStyles.startButton
+              ]}
+              onPress={handleToggleCollection}
+              activeOpacity={0.8}
+            >
+              <Text style={industrialStyles.primaryButtonText}>
+                {isCollecting ? '⏸️ 停止採集' : '▶️ 開始採集'}
+              </Text>
+              {isCollecting && (
+                <Text style={industrialStyles.primaryButtonSubtext}>
+                  距離: {sessionState.totalDistance.toFixed(2)} km
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {/* 卸貨變現按鈕 */}
+            <TouchableOpacity
+              style={[
+                industrialStyles.secondaryButton,
+                inventoryState.items.length === 0 && industrialStyles.buttonDisabled
               ]}
               onPress={() => setUnloadModalVisible(true)}
-              activeOpacity={0.8}
               disabled={inventoryState.items.length === 0}
+              activeOpacity={0.8}
             >
-              <Text style={outdoorStyles.actionButtonText}>🚚 卸貨變現</Text>
-              <Text style={outdoorStyles.actionButtonSubtext}>
-                ${sessionState.estimatedValue.toFixed(0)} USD
+              <Text style={industrialStyles.secondaryButtonText}>
+                🚚 卸貨變現
+              </Text>
+              <Text style={industrialStyles.secondaryButtonSubtext}>
+                {inventoryState.items.length} 物品 | ${sessionState.estimatedValue.toFixed(0)}
+              </Text>
+            </TouchableOpacity>
+
+            {/* 背包管理按鈕 */}
+            <TouchableOpacity
+              style={industrialStyles.secondaryButton}
+              onPress={() => setShowInventory(!showInventory)}
+              activeOpacity={0.8}
+            >
+              <Text style={industrialStyles.secondaryButtonText}>
+                📦 背包 ({inventoryState.items.length})
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* 6. 拾取通知（類似 Pokemon Go 的彈窗） */}
+          {/* ========== 拾取通知卡片 (Pickup Card) ========== */}
           {lastPickedItem && (
             <Animated.View 
               style={[
-                outdoorStyles.pickupNotification,
+                industrialStyles.pickupCard,
                 { opacity: pickupNotificationOpacity }
               ]}
             >
-              <Text style={outdoorStyles.pickupEmoji}>
-                {lastPickedItem.tier === 1 ? '🍞' : lastPickedItem.tier === 2 ? '🥩' : '💎'}
-              </Text>
-              <Text style={outdoorStyles.pickupText}>
-                拾取 {lastPickedItem.tier === 1 ? 'T1' : lastPickedItem.tier === 2 ? 'T2' : 'T3'} 物品
-              </Text>
-              <Text style={outdoorStyles.pickupValue}>
-                +{lastPickedItem.value} $SOLE
-              </Text>
+              <View style={industrialStyles.pickupCardContent}>
+                <Text style={industrialStyles.pickupEmoji}>
+                  {lastPickedItem.tier === 1 ? '🍞' : lastPickedItem.tier === 2 ? '🥩' : '💎'}
+                </Text>
+                <View style={industrialStyles.pickupInfo}>
+                  <Text style={industrialStyles.pickupTitle}>
+                    {lastPickedItem.tier === 1 ? 'T1 琥珀粗糖' : lastPickedItem.tier === 2 ? 'T2 翡翠晶糖' : 'T3 皇室純糖'}
+                  </Text>
+                  <Text style={industrialStyles.pickupDetails}>
+                    重量: +{lastPickedItem.weight} kg | 價值: ${lastPickedItem.value}
+                  </Text>
+                  <Text style={industrialStyles.pickupDetails}>
+                    衛生影響: -{calculateContamination(lastPickedItem.tier).toFixed(1)}%
+                  </Text>
+                </View>
+              </View>
             </Animated.View>
           )}
         </View>
@@ -1970,14 +2010,24 @@ export default function GameScreen() {
       />
 
       {/* 卸貨變現模態框 */}
-      <UnloadModal
-        visible={unloadModalVisible}
-        onClose={() => setUnloadModalVisible(false)}
-        onSuccess={(revenue) => {
-          Alert.alert('成功', `卸貨完成！收益：$${revenue.toFixed(2)} SOLE`);
-        }}
-        isGoldenMistNode={false} // 可以改為 true 來測試 M Info
-      />
+       <UnloadModal
+         visible={unloadModalVisible}
+         onClose={() => setUnloadModalVisible(false)}
+         onSuccess={async (revenue) => {
+           // 卸貨時記錄終點
+           const finalLocation = await locationService.getCurrentLocation();
+           if (finalLocation) {
+             setCollectionEndPoint({
+               latitude: finalLocation.latitude,
+               longitude: finalLocation.longitude,
+             });
+             console.log('[GameScreen] Unload completed, end point recorded:', finalLocation.latitude, finalLocation.longitude);
+           }
+           
+           Alert.alert('成功', `卸貨完成！收益：$${revenue.toFixed(2)} SOLE`);
+         }}
+         isGoldenMistNode={false} // 可以改為 true 來測試 M Info
+       />
     </SafeAreaView>
   );
 }
@@ -2582,5 +2632,291 @@ const outdoorStyles = StyleSheet.create({
   },
   mapCardContent: {
     marginTop: 12,
+  },
+});
+
+// ========== 工業風樣式（賽博工裝風）==========
+const industrialStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1A1A1A', // 深灰背景
+  },
+  topStatusBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#2A2A2A',
+    borderBottomWidth: 2,
+    borderBottomColor: '#FFD700', // 工業黃
+  },
+  staminaSection: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusLabel: {
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  progressBarContainer: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#333',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginRight: 8,
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  statusValue: {
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: '700',
+    minWidth: 40,
+  },
+  gpsStatus: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  gpsIndicator: {
+    fontSize: 12,
+    color: '#999',
+    fontWeight: '600',
+  },
+  gpsActive: {
+    color: '#4CAF50',
+  },
+  walletSection: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  walletLabel: {
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  walletValue: {
+    fontSize: 14,
+    color: '#FFD700', // 工業黃
+    fontWeight: '700',
+  },
+  mapContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  mapOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  mapOverlayText: {
+    fontSize: 18,
+    color: '#FFF',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  pathfinderBadge: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 215, 0, 0.9)',
+    zIndex: 20,
+  },
+  pathfinderText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000',
+  },
+  dashboard: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#2A2A2A',
+    borderTopWidth: 2,
+    borderTopColor: '#FFD700',
+  },
+  capacityWidget: {
+    flex: 2,
+    padding: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
+    marginRight: 8,
+    position: 'relative',
+  },
+  capacityWarning: {
+    borderColor: '#F44336',
+  },
+  capacityValue: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#4CAF50',
+    marginTop: 4,
+  },
+  capacityValueWarning: {
+    color: '#F44336',
+  },
+  expandedBadge: {
+    marginTop: 4,
+    fontSize: 10,
+    color: '#FFD700',
+    fontWeight: '600',
+  },
+  durabilityWidget: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#666',
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  hygieneWidget: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#666',
+    alignItems: 'center',
+  },
+  dashboardLabel: {
+    fontSize: 10,
+    color: '#999',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  durabilityValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#4CAF50',
+  },
+  durabilityWarning: {
+    color: '#FF9800',
+  },
+  hygieneValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#4CAF50',
+  },
+  hygieneWarning: {
+    color: '#FF9800',
+  },
+  multiplierText: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 2,
+  },
+  actionZone: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#2A2A2A',
+    borderTopWidth: 2,
+    borderTopColor: '#FFD700',
+    justifyContent: 'space-between',
+  },
+  primaryButton: {
+    flex: 2,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  startButton: {
+    backgroundColor: '#FFD700', // 工業黃
+  },
+  stopButton: {
+    backgroundColor: '#F44336', // 紅色
+  },
+  primaryButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000',
+    marginBottom: 4,
+  },
+  primaryButtonSubtext: {
+    fontSize: 12,
+    color: '#000',
+    opacity: 0.8,
+  },
+  secondaryButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#666',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+    borderColor: '#333',
+  },
+  secondaryButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 2,
+  },
+  secondaryButtonSubtext: {
+    fontSize: 10,
+    color: '#999',
+  },
+  pickupCard: {
+    position: 'absolute',
+    bottom: 120,
+    left: 16,
+    right: 16,
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000,
+  },
+  pickupCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pickupEmoji: {
+    fontSize: 48,
+    marginRight: 16,
+  },
+  pickupInfo: {
+    flex: 1,
+  },
+  pickupTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFF',
+    marginBottom: 4,
+  },
+  pickupDetails: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 2,
   },
 });
