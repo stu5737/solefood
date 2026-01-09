@@ -13,4 +13,6 @@ export * from './maintenance';
 export * from './unloading';
 export * from './expansion';
 export * from './luck';
+export * from './tiered';
+export * from './h3';
 

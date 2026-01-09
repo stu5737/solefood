@@ -23,6 +23,9 @@ import { calculateHygieneDecay } from '../math/hygiene';
 import { ANTI_CHEAT, ITEM_DISTRIBUTION, ITEM_WEIGHTS, ITEM_VALUES, ITEM_PICKUP_COSTS, ITEM_CONSUME_RESTORE } from '../../utils/constants';
 import { Item, ItemTier } from '../../types/item';
 import { calculateItemDropRate } from '../math/luck';
+import { explorationService } from '../../services/exploration';
+import { gpsHistoryService } from '../../services/gpsHistory';
+import { calculateDistance } from '../math/distance';
 
 /**
  * 熵計算引擎類
@@ -87,6 +90,44 @@ class EntropyEngine {
     const inventoryStore = useInventoryStore.getState();
     const currentTime = input.timestamp || Date.now();
 
+    // 2.1 處理 GPS 位置數據（如果提供）
+    if (input.gpsLocation) {
+      const { latitude, longitude } = input.gpsLocation;
+      
+      // 記錄造訪區域
+      const h3Index = explorationService.recordVisit(latitude, longitude);
+      
+      // 檢查是否為開拓者區域（Gray Zone）
+      const isPathfinder = explorationService.isGrayZone(h3Index);
+      
+      // 更新 sessionStore 的 pathfinder 狀態
+      sessionState.pathfinder = {
+        isPathfinder,
+        lastVisited: Date.now(),
+        h3Grid: h3Index,
+      };
+      
+      // 添加到 GPS 歷史
+      const lastLocation = gpsHistoryService.getRecentPoints(1)[0];
+      let distance = 0;
+      if (lastLocation) {
+        distance = calculateDistance(
+          { latitude: lastLocation.latitude, longitude: lastLocation.longitude },
+          { latitude, longitude }
+        );
+      }
+      gpsHistoryService.addPoint(
+        {
+          latitude,
+          longitude,
+          timestamp: currentTime,
+          accuracy: input.gpsLocation.accuracy,
+          speed: input.gpsLocation.speed,
+        },
+        distance
+      );
+    }
+
     // 3. 累積距離到 pendingDistance
     // GPS 更新是細粒度的（例如 0.02km, 0.05km），需要累積
     this.pendingDistance += input.distance;
@@ -113,13 +154,15 @@ class EntropyEngine {
     const baseStaminaBurn = calculateMovementBurn(input.distance);
     
     // 4.2 重量懲罰：負重越高，消耗越大
-    // 懲罰係數 = 1.0 + (currentWeight / maxWeight)
+    // 懲罰係數 = 1.0 + (currentWeight / effectiveMaxWeight)
     // 注意：重量懲罰只影響移動消耗，不影響拾取成本
     // 重要：重量懲罰必須始終應用，無論是拾取、食用還是忽略物品
+    // 必須使用 getEffectiveMaxWeight() 以考慮臨時擴容和階梯式倍率
     let staminaBurn = baseStaminaBurn;
     let weightMultiplier = 1.0;
-    if (playerState.maxWeight > 0) {
-      const weightRatio = playerState.currentWeight / playerState.maxWeight;
+    const effectiveMaxWeight = playerState.getEffectiveMaxWeight(); // 使用動態有效容量
+    if (effectiveMaxWeight > 0) {
+      const weightRatio = playerState.currentWeight / effectiveMaxWeight;
       weightMultiplier = 1.0 + weightRatio;
       staminaBurn = baseStaminaBurn * weightMultiplier;
     }
@@ -401,7 +444,9 @@ class EntropyEngine {
       // Step 1: 檢查空間（優先級 #1）
       // 如果背包滿了，強制轉換溢出（Universal Overflow）
       // 物理法則：沒有空間就無法持有，廣告也無法解決重力/體積問題
-      const wouldExceedWeight = currentInventoryState.totalWeight + item.weight > currentPlayerState.maxWeight;
+      // 必須使用 getEffectiveMaxWeight() 以考慮臨時擴容和階梯式倍率
+      const effectiveMaxWeight = currentPlayerState.getEffectiveMaxWeight();
+      const wouldExceedWeight = currentInventoryState.totalWeight + item.weight > effectiveMaxWeight;
       
       if (wouldExceedWeight) {
         // Branch B: 通用轉換溢出（Universal Conversion Overflow）
@@ -513,9 +558,8 @@ class EntropyEngine {
     // 檢查深層領域（10km+）
     const isInDeepZone = sessionStore.deepZone?.isInDeepZone || false;
     
-    // 檢查開拓者狀態（需要從當前位置判斷，這裡暫時設為 false）
-    // TODO: 整合 H3 網格系統以判斷開拓者狀態
-    const isPathfinder = false;
+    // 檢查開拓者狀態（從 sessionStore 獲取，已由 GPS 更新）
+    const isPathfinder = sessionStore.pathfinder?.isPathfinder || false;
     
     // 計算最終掉落機率
     const t1Rate = calculateItemDropRate(1, streak, isPathfinder, isInDeepZone);

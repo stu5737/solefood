@@ -57,17 +57,20 @@ export function getPayoutMultiplier(mode: PayoutMode): number {
 }
 
 /**
- * 計算最終收益（階層閾值機制）
+ * 計算最終收益（十進位階梯制）
  * @param baseValue 基礎價值（$SOLE）
  * @param mode 變現模式
  * @param hygiene 衛生值（0-100，用於收益折損）
  * @returns 最終收益（$SOLE）
  * 
- * 階層閾值邏輯（Forgiveness Mechanic）：
- * - 衛生值 >= 90%：使用 100% 價值（Grade A Quality）
- * - 衛生值 < 90%：使用 90% 價值（Grade B Quality，10% 折損）
+ * 十進位階梯制邏輯（Progressive Decile Tier System）：
+ * - 90-100%: 1.0x (完美狀態)
+ * - 80-89%: 0.9x (輕微磨損)
+ * - 70-79%: 0.8x (中度磨損)
+ * - ...
+ * - 0-9%: 0.1x (幾近報廢)
  * 
- * 這避免了微小的懲罰讓玩家感到煩惱
+ * 這讓「清潔」變得更有急迫性，因為一旦掉出 90% 的舒適圈，懲罰是持續加重的！
  */
 export function calculateFinalPayout(
   baseValue: number,
@@ -77,9 +80,9 @@ export function calculateFinalPayout(
   const multiplier = getPayoutMultiplier(mode);
   const baseEarnings = baseValue * multiplier;
   
-  // 階層閾值機制：衛生值 < 90% 時，收益降至 90%
-  const threshold = 90;
-  const qualityMultiplier = hygiene < threshold ? 0.9 : 1.0;
+  // 十進位階梯制：根據衛生值計算品質倍率
+  const { getTieredMultiplier } = require('./tiered');
+  const qualityMultiplier = getTieredMultiplier(hygiene);
   
   return baseEarnings * qualityMultiplier;
 }

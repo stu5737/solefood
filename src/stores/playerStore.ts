@@ -240,15 +240,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
   
   /**
-   * 獲取有效最大容量（階層閾值機制 + 臨時擴容）
+   * 獲取有效最大容量（十進位階梯制 + 臨時擴容）
    * 
-   * 根據白皮書 v8.7：階層閾值（Forgiveness Mechanic）
-   * - 耐久度 >= 90%：使用完整容量
-   * - 耐久度 < 90%：容量降至 90%（警告機制）
+   * 根據白皮書 v8.7：十進位階梯制（Progressive Decile Tier System）
+   * - 90-100%: 1.0x (完美狀態)
+   * - 80-89%: 0.9x (輕微磨損)
+   * - 70-79%: 0.8x (中度磨損)
+   * - ...
+   * - 0-9%: 0.1x (幾近報廢)
    * 
    * 考慮臨時擴容：
    * - 如果啟用臨時擴容：基礎容量 × 1.5
-   * - 然後應用 90% 閾值規則
+   * - 然後應用十進位階梯制倍率
    * 
    * 此方法會自動從 sessionStore 獲取臨時擴容狀態，確保響應性
    * 
@@ -256,7 +259,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
    */
   getEffectiveMaxWeight: () => {
     const state = get();
-    const threshold = 90; // 階層閾值（90%）
     
     // 從 sessionStore 獲取臨時擴容狀態（動態獲取，確保響應性）
     // 使用 require 避免循環依賴
@@ -268,12 +270,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const base = state.baseMaxWeight;
     const calculatedBase = isTempExpanded ? base * 1.5 : base;
     
-    // 2. 應用 90% 階層閾值規則
-    if (state.durability < threshold) {
-      return calculatedBase * 0.9;
-    }
+    // 2. 應用十進位階梯制倍率
+    const { getTieredMultiplier } = require('../core/math/tiered');
+    const multiplier = getTieredMultiplier(state.durability);
     
-    // 否則使用完整容量
-    return calculatedBase;
+    return calculatedBase * multiplier;
   },
 }));

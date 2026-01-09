@@ -159,6 +159,15 @@ interface SessionActions {
   checkDeepZone: () => void;
   
   /**
+   * 檢查並更新開拓者狀態
+   * 
+   * @param latitude - 緯度
+   * @param longitude - 經度
+   * @returns 是否為開拓者區域
+   */
+  checkPathfinder: (latitude: number, longitude: number) => boolean;
+  
+  /**
    * 更新簽到狀態
    * 
    * 檢查日期變更，更新連續簽到天數
@@ -339,6 +348,31 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   /**
    * 檢查深層領域
    */
+  /**
+   * 檢查並更新開拓者狀態
+   * 
+   * @param latitude - 緯度
+   * @param longitude - 經度
+   * @returns 是否為開拓者區域
+   */
+  checkPathfinder: (latitude: number, longitude: number) => {
+    const { explorationService } = require('../services/exploration');
+    const { latLngToH3, H3_RESOLUTION } = require('../core/math/h3');
+    
+    const h3Index = latLngToH3(latitude, longitude, H3_RESOLUTION);
+    const isPathfinder = explorationService.isGrayZone(h3Index);
+    
+    set((state) => ({
+      pathfinder: {
+        isPathfinder,
+        lastVisited: Date.now(),
+        h3Grid: h3Index,
+      },
+    }));
+    
+    return isPathfinder;
+  },
+  
   checkDeepZone: () => {
     const state = get();
     const isInDeepZone = state.sessionDistance >= DEEP_ZONE.BREAKTHROUGH_DISTANCE;

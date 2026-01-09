@@ -148,8 +148,8 @@ class LocationService {
           // 更新最後位置
           this.lastLocation = locationData;
 
-          // 調用回調
-          if (this.onLocationUpdate && distance > 0) {
+          // 調用回調（移除 distance > 0 的限制，因為實時地圖需要所有位置更新）
+          if (this.onLocationUpdate) {
             this.onLocationUpdate(locationData, distance);
           }
         }
@@ -177,6 +177,42 @@ class LocationService {
   }
 
   /**
+   * 訂閱位置更新（用於實時地圖）
+   * 
+   * 注意：此方法會重用現有的 watchSubscription，如果已經在追蹤則直接返回
+   * 
+   * @param callback - 位置更新回調函數
+   * @returns 訂閱對象（可用於取消訂閱）
+   */
+  subscribeToLocationUpdates(
+    callback: (location: LocationData, distance: number) => void
+  ): { remove: () => void } | null {
+    // 如果已經有訂閱，設置新的回調
+    if (this.watchSubscription) {
+      this.onLocationUpdate = callback;
+      return {
+        remove: () => {
+          // 不停止追蹤，只是移除回調
+          this.onLocationUpdate = undefined;
+        },
+      };
+    }
+
+    // 如果沒有訂閱，啟動追蹤
+    this.startTracking(callback).catch((error) => {
+      console.error('[LocationService] Failed to start tracking for subscription:', error);
+    });
+
+    // 返回取消訂閱函數
+    return {
+      remove: () => {
+        // 只移除回調，不停止追蹤（因為可能還有其他地方在使用）
+        this.onLocationUpdate = undefined;
+      },
+    };
+  }
+
+  /**
    * 獲取最後位置
    */
   getLastLocation(): LocationData | null {
@@ -199,6 +235,55 @@ class LocationService {
     }
     
     return true;
+  }
+
+  /**
+   * 驗證 GPS 數據（綜合防作弊檢查）
+   * 
+   * @param currentLocation - 當前位置
+   * @param previousLocation - 上一個位置（可選）
+   * @returns 驗證結果
+   */
+  validateGPSData(
+    currentLocation: LocationData,
+    previousLocation?: LocationData
+  ): { valid: boolean; reason?: string } {
+    // 1. 檢查速度
+    if (currentLocation.speed !== undefined) {
+      const speedKmh = currentLocation.speed * 3.6;
+      if (speedKmh > 50) {
+        return { valid: false, reason: `Suspicious speed: ${speedKmh.toFixed(2)} km/h` };
+      }
+    }
+
+    // 2. 檢查精度
+    if (currentLocation.accuracy && currentLocation.accuracy > 100) {
+      return { valid: false, reason: `Low accuracy: ${currentLocation.accuracy.toFixed(2)}m` };
+    }
+
+    // 3. 檢查距離跳躍（如果存在上一個位置）
+    if (previousLocation) {
+      const distance = calculateDistance(
+        { latitude: previousLocation.latitude, longitude: previousLocation.longitude },
+        { latitude: currentLocation.latitude, longitude: currentLocation.longitude }
+      );
+      
+      const timeDiff = (currentLocation.timestamp - previousLocation.timestamp) / 1000; // 秒
+      
+      // 如果時間差為 0 或負數，跳過距離檢查
+      if (timeDiff > 0) {
+        const maxPossibleDistance = (timeDiff / 3600) * 50; // 最大可能距離（50 km/h）
+        
+        if (distance > maxPossibleDistance * 1.5) { // 允許 50% 誤差
+          return { 
+            valid: false, 
+            reason: `Impossible distance jump: ${distance.toFixed(2)}km in ${timeDiff.toFixed(1)}s` 
+          };
+        }
+      }
+    }
+
+    return { valid: true };
   }
 }
 

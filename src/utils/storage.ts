@@ -23,6 +23,8 @@ const STORAGE_KEYS = {
   PENDING_ENCOUNTER: 'pending_encounter',
   LAST_DAILY_RESET: 'last_daily_reset',
   DAILY_DISTANCE: 'daily_distance',
+  EXPLORED_REGIONS: 'explored_regions',  // 已探索區域
+  GPS_HISTORY: 'gps_history',            // GPS 歷史軌跡
 } as const;
 
 /**

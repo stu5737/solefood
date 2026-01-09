@@ -12,9 +12,15 @@ import type { Item } from '../../types/item';
  */
 export interface MovementInput {
   distance: number;    // 移動距離（公里）
-  speed: number;       // 移動速度（km/h）
-  timestamp: number;   // 時間戳（毫秒）
+  speed?: number;      // 移動速度（km/h，可選）
+  timestamp?: number;  // 時間戳（毫秒，可選，默認為當前時間）
   forceLootTier?: 1 | 2 | 3; // 調試用：強制生成指定階層的物品（可選）
+  gpsLocation?: {      // GPS 位置數據（可選）
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    speed?: number;
+  };
 }
 
 /**
