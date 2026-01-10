@@ -24,8 +24,7 @@ import { ANTI_CHEAT, ITEM_DISTRIBUTION, ITEM_WEIGHTS, ITEM_VALUES, ITEM_PICKUP_C
 import { Item, ItemTier } from '../../types/item';
 import { calculateItemDropRate } from '../math/luck';
 import { explorationService } from '../../services/exploration';
-import { gpsHistoryService } from '../../services/gpsHistory';
-import { calculateDistance } from '../math/distance';
+import { latLngToH3, H3_RESOLUTION } from '../math/h3';
 
 /**
  * 熵計算引擎類
@@ -91,11 +90,14 @@ class EntropyEngine {
     const currentTime = input.timestamp || Date.now();
 
     // 2.1 處理 GPS 位置數據（如果提供）
+    // 注意：GPS 點的記錄和探索區域記錄應該在調用 processMovement 之前完成（例如在 RealTimeMap 中）
+    // 這裡只負責更新開拓者狀態（pathfinder），不重複記錄 GPS 點或探索區域
     if (input.gpsLocation) {
       const { latitude, longitude } = input.gpsLocation;
       
-      // 記錄造訪區域
-      const h3Index = explorationService.recordVisit(latitude, longitude);
+      // 直接計算 H3 索引（不重複調用 recordVisit，因為 RealTimeMap 已經記錄了）
+      // 這樣可以避免重複記錄，同時獲取 H3 索引用於 pathfinder 狀態更新
+      const h3Index = latLngToH3(latitude, longitude, H3_RESOLUTION) || '';
       
       // 檢查是否為開拓者區域（Gray Zone）
       const isPathfinder = explorationService.isGrayZone(h3Index);
@@ -107,25 +109,10 @@ class EntropyEngine {
         h3Grid: h3Index,
       };
       
-      // 添加到 GPS 歷史
-      const lastLocation = gpsHistoryService.getRecentPoints(1)[0];
-      let distance = 0;
-      if (lastLocation) {
-        distance = calculateDistance(
-          { latitude: lastLocation.latitude, longitude: lastLocation.longitude },
-          { latitude, longitude }
-        );
-      }
-      gpsHistoryService.addPoint(
-        {
-          latitude,
-          longitude,
-          timestamp: currentTime,
-          accuracy: input.gpsLocation.accuracy,
-          speed: input.gpsLocation.speed,
-        },
-        distance
-      );
+      // GPS 點的記錄已經在 RealTimeMap 中完成（gpsHistoryService.addPoint）
+      // 探索區域的記錄也在 RealTimeMap 中完成（explorationService.recordVisit）
+      // 這裡只更新 pathfinder 狀態，不重複記錄
+      // 距離信息使用 input.distance（已經在 RealTimeMap 中計算好）
     }
 
     // 3. 累積距離到 pendingDistance

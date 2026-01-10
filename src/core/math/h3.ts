@@ -81,7 +81,7 @@ function getH3ModuleSync() {
  * - Resolution 10: ~0.05 km² (適合精確定位)
  * - Resolution 11: ~0.01 km² (適合高精度)
  */
-export const H3_RESOLUTION = 10; // 建議使用 10，平衡精度與性能
+export const H3_RESOLUTION = 11; // 使用 11，更高精度（~67m 網格），讓H3方格更小更精緻
 
 /**
  * 將 GPS 座標轉換為 H3 網格 ID

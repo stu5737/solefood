@@ -24,7 +24,8 @@ const STORAGE_KEYS = {
   LAST_DAILY_RESET: 'last_daily_reset',
   DAILY_DISTANCE: 'daily_distance',
   EXPLORED_REGIONS: 'explored_regions',  // 已探索區域
-  GPS_HISTORY: 'gps_history',            // GPS 歷史軌跡
+  GPS_HISTORY: 'gps_history',            // GPS 歷史軌跡（7天內的所有點）
+  GPS_SESSIONS: 'gps_sessions',          // GPS 採集會話記錄
 } as const;
 
 /**

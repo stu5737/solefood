@@ -139,6 +139,54 @@ class ExplorationService {
   }
 
   /**
+   * 從GPS歷史點計算7天內的H3區域統計
+   * 用於在地圖上顯示綠色正方形提示已探索區域
+   * 
+   * @param historyPoints - 7天內的GPS歷史點
+   * @returns 區域統計 Map (H3索引 -> 訪問次數)
+   */
+  calculateRegionStats(historyPoints: Array<{ latitude: number; longitude: number; timestamp: number }>): Map<string, number> {
+    const regionStats = new Map<string, number>();
+    const sevenDaysAgo = Date.now() - (this.MEMORY_DAYS * 24 * 60 * 60 * 1000);
+    
+    historyPoints
+      .filter(point => point.timestamp >= sevenDaysAgo)
+      .forEach(point => {
+        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+        if (h3Index) {
+          const count = regionStats.get(h3Index) || 0;
+          regionStats.set(h3Index, count + 1);
+        }
+      });
+    
+    return regionStats;
+  }
+
+  /**
+   * 獲取7天內訪問頻繁的區域（用於綠色正方形顯示）
+   * 
+   * @param historyPoints - 7天內的GPS歷史點
+   * @param minVisits - 最少訪問次數閾值（默認1次）
+   * @returns 區域統計數組（按訪問次數排序）
+   */
+  getFrequentlyVisitedRegions(
+    historyPoints: Array<{ latitude: number; longitude: number; timestamp: number }>,
+    minVisits: number = 1
+  ): Array<{ h3Index: string; visitCount: number }> {
+    const stats = this.calculateRegionStats(historyPoints);
+    const regions: Array<{ h3Index: string; visitCount: number }> = [];
+    
+    stats.forEach((visitCount, h3Index) => {
+      if (visitCount >= minVisits) {
+        regions.push({ h3Index, visitCount });
+      }
+    });
+    
+    // 按訪問次數降序排序
+    return regions.sort((a, b) => b.visitCount - a.visitCount);
+  }
+
+  /**
    * 獲取已探索區域數量
    */
   getExploredCount(): number {
