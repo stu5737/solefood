@@ -347,30 +347,15 @@ export default function GameScreen() {
 
             {/* 地圖區域（顯示選中的歷史軌跡） */}
             {selectedSessionId && (
-              <>
-                {/* 軌跡統計面板 */}
-                {(() => {
-                  const session = allSessions.find(s => s.sessionId === selectedSessionId);
-                  if (session && session.points && session.points.length > 0) {
-                    return (
-                      <View style={styles.modalStatsContainer}>
-                        <TrailStatsPanel trail={session.points} />
-                      </View>
-                    );
-                  }
-                  return null;
-                })()}
-                
-                <View style={styles.modalMapContainer}>
-                  <RealTimeMap
-                    showTrail={true}
-                    height={Dimensions.get('window').height * 0.5} // 佔用一半螢幕高度
-                    isCollecting={false}
-                    selectedSessionId={selectedSessionId}
-                    showHistoryTrail={true}
-                  />
-                </View>
-              </>
+              <View style={styles.modalMapContainer}>
+                <RealTimeMap
+                  showTrail={true}
+                  height={Dimensions.get('window').height * 0.5} // 佔用一半螢幕高度
+                  isCollecting={false}
+                  selectedSessionId={selectedSessionId}
+                  showHistoryTrail={true}
+                />
+              </View>
             )}
           </SafeAreaView>
         </View>
@@ -593,11 +578,6 @@ const styles = StyleSheet.create({
   modalSessionInfo: {
     color: '#B0B0B0',
     fontSize: 14,
-  },
-  modalStatsContainer: {
-    backgroundColor: '#1A1A1A',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   modalMapContainer: {
     height: Dimensions.get('window').height * 0.5,

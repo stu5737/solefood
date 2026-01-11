@@ -13,7 +13,6 @@ import { gpsHistoryService } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
 import { latLngToH3, H3_RESOLUTION } from '../../core/math/h3';
-import { calculateDistance, calculateSpeed } from '../../core/math/distance';
 import type { LocationData } from '../../services/location';
 import type { ExploredRegion } from '../../services/exploration';
 import type { MovementInput } from '../../core/entropy/events';
@@ -107,17 +106,10 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // 當 selectedSessionId、showHistoryTrail 或 isCollecting 變化時，更新軌跡顯示
   useEffect(() => {
     if (showHistoryTrail && selectedSessionId) {
-      // 如果正在查看歷史軌跡，載入完整的軌跡線
+      // 如果正在查看歷史軌跡，只載入起點和終點
       const historyTrail = gpsHistoryService.getSessionTrail(selectedSessionId);
       if (historyTrail.length > 0) {
-        // 載入完整軌跡線
-        const fullTrail = historyTrail.map(point => ({
-          latitude: point.latitude,
-          longitude: point.longitude,
-        }));
-        setTrailCoordinates(fullTrail);
-        
-        // 設置起點和終點
+        // 只保留起點和終點
         const startPoint = {
           latitude: historyTrail[0].latitude,
           longitude: historyTrail[0].longitude,
@@ -128,21 +120,21 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         };
         setHistoryStartPoint(startPoint);
         setHistoryEndPoint(endPoint);
+        // 歷史軌跡不顯示完整軌跡線，清空 trailCoordinates
+        setTrailCoordinates([]);
         
-        // 自動縮放地圖以涵蓋整個軌跡
-        if (mapRef.current && fullTrail.length > 0) {
+        // 自動將地圖中心設為起點
+        if (mapRef.current) {
+          const region: Region = {
+            latitude: startPoint.latitude,
+            longitude: startPoint.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          };
           requestAnimationFrame(() => {
             if (mapRef.current) {
-              mapRef.current.fitToCoordinates(fullTrail, {
-                edgePadding: {
-                  top: 50,
-                  right: 50,
-                  bottom: 50,
-                  left: 50,
-                },
-                animated: true,
-              });
-              console.log('[RealTimeMap] Historical trail: Map fitted to coordinates');
+              mapRef.current.animateToRegion(region, 1000);
+              console.log('[RealTimeMap] Historical trail: Map centered on start point');
             }
           });
         }
@@ -223,18 +215,11 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           });
         }
         
-        // 載入軌跡：優先顯示歷史軌跡（完整軌跡線），其次顯示當前會話軌跡
+        // 載入軌跡：優先顯示歷史軌跡（只顯示起終點），其次顯示當前會話軌跡
         if (showHistoryTrail && selectedSessionId) {
           const historyTrail = gpsHistoryService.getSessionTrail(selectedSessionId);
           if (historyTrail.length > 0) {
-            // 載入完整軌跡線
-            const fullTrail = historyTrail.map(point => ({
-              latitude: point.latitude,
-              longitude: point.longitude,
-            }));
-            setTrailCoordinates(fullTrail);
-            
-            // 設置起點和終點
+            // 歷史軌跡只顯示起終點
             const startPoint = {
               latitude: historyTrail[0].latitude,
               longitude: historyTrail[0].longitude,
@@ -245,20 +230,20 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             };
             setHistoryStartPoint(startPoint);
             setHistoryEndPoint(endPoint);
+            setTrailCoordinates([]); // 歷史軌跡不顯示完整軌跡線
             
-            // 自動縮放地圖以涵蓋整個軌跡
+            // 自動將地圖中心設為起點
+            const region: Region = {
+              latitude: startPoint.latitude,
+              longitude: startPoint.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            };
+            setCurrentRegion(region);
             requestAnimationFrame(() => {
-              if (mapRef.current && fullTrail.length > 0) {
-                mapRef.current.fitToCoordinates(fullTrail, {
-                  edgePadding: {
-                    top: 50,
-                    right: 50,
-                    bottom: 50,
-                    left: 50,
-                  },
-                  animated: true,
-                });
-                console.log('[RealTimeMap] Historical trail: Map fitted to coordinates on initial load');
+              if (mapRef.current) {
+                mapRef.current.animateToRegion(region, 1000);
+                console.log('[RealTimeMap] Historical trail: Map centered on start point on initial load');
               }
             });
           }
@@ -422,7 +407,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         ref={mapRef}
         style={[mapStyle, { backgroundColor: '#1A1A1A' }]}
         initialRegion={getInitialRegion()}
-        showsUserLocation={!showHistoryTrail} // 查看歷史時隱藏藍點
+        showsUserLocation={true}
         showsMyLocationButton={false}
         followsUserLocation={isFollowing && !showHistoryTrail} // 根據 isFollowing 狀態決定是否跟隨，查看歷史時不跟隨
         showsCompass={true}
@@ -624,15 +609,15 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           );
         })}
 
-        {/* GPS 軌跡線（當前會話和歷史軌跡都顯示完整軌跡） */}
-        {showTrail && trailCoordinates.length > 1 && (
+        {/* GPS 軌跡線（只顯示當前會話，歷史軌跡不顯示完整軌跡） */}
+        {showTrail && !showHistoryTrail && trailCoordinates.length > 1 && (
           <Polyline
             coordinates={trailCoordinates}
-            strokeColor={showHistoryTrail ? "#00FF00" : "#4CAF50"} // 歷史軌跡用亮綠色，當前會話用綠色
-            strokeWidth={showHistoryTrail ? 5 : 4} // 歷史軌跡稍微粗一點
+            strokeColor="#4CAF50" // 當前會話用綠色
+            strokeWidth={4}
             lineCap="round"
             lineJoin="round"
-            opacity={showHistoryTrail ? 0.9 : 1.0} // 歷史軌跡稍微透明
+            opacity={1.0}
           />
         )}
 
