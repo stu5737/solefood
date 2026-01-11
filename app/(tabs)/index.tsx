@@ -26,10 +26,14 @@ import { locationService } from '../../src/services/location';
 import { gpsHistoryService } from '../../src/services/gpsHistory';
 import { explorationService } from '../../src/services/exploration';
 import { entropyEngine } from '../../src/core/entropy/engine';
+import { useSessionStore } from '../../src/stores/sessionStore';
 import type { CollectionSession } from '../../src/services/gpsHistory';
 import type { MovementInput } from '../../src/core/entropy/events';
 
 export default function GameScreen() {
+  // 從 Store 獲取地圖模式和更新方法
+  const updateExploredHexesFromHistory = useSessionStore((state) => state.updateExploredHexesFromHistory);
+  
   const [isReady, setIsReady] = useState(false);
   const [isCollecting, setIsCollecting] = useState(false); // 採集狀態
   const [showHistoryTrail, setShowHistoryTrail] = useState(false); // 是否顯示歷史軌跡
@@ -45,6 +49,9 @@ export default function GameScreen() {
         // 初始化服務
         await explorationService.initialize();
         await gpsHistoryService.initialize();
+        
+        // 初始化時更新已探索的 H3 六邊形（從7天歷史軌跡）
+        updateExploredHexesFromHistory();
         
         // 請求位置權限並獲取當前位置
         const hasPermission = await locationService.checkPermissions();

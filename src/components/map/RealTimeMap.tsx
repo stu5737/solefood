@@ -12,7 +12,8 @@ import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
-import { latLngToH3, H3_RESOLUTION } from '../../core/math/h3';
+import { latLngToH3, H3_RESOLUTION, getH3CellBoundary } from '../../core/math/h3';
+import { useSessionStore } from '../../stores/sessionStore';
 import type { LocationData } from '../../services/location';
 import type { ExploredRegion } from '../../services/exploration';
 import type { MovementInput } from '../../core/entropy/events';
@@ -55,6 +56,11 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   selectedSessionId = null,
   showHistoryTrail = false,
 }) => {
+  // 從 Store 獲取地圖模式和已探索的 H3 六邊形
+  const mapMode = useSessionStore((state) => state.mapMode);
+  const exploredHexes = useSessionStore((state) => state.exploredHexes);
+  const updateExploredHexesFromHistory = useSessionStore((state) => state.updateExploredHexesFromHistory);
+  
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
   const [trailCoordinates, setTrailCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [historyStartPoint, setHistoryStartPoint] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -65,6 +71,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   const [isFollowing, setIsFollowing] = useState(true); // 預設開啟跟隨模式
   const mapRef = useRef<MapView>(null);
   const subscriptionRef = useRef<{ remove: () => void } | null>(null);
+  
+  // 根據 showHistoryTrail 確定實際的地圖模式
+  const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
 
   // 獲取 H3 網格邊界（用於顯示已探索區域）
   // 注意：在 React Native 中，h3-js 無法正常工作，因此直接使用降級實現
@@ -173,15 +182,22 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   }, [selectedSessionId, showHistoryTrail, isCollecting]);
 
 
-  // 載入已探索區域和7天歷史統計
+  // 初始化時載入已探索的 H3 六邊形（從7天歷史軌跡）
+  useEffect(() => {
+    if (mapMode === 'GAME') {
+      updateExploredHexesFromHistory();
+    }
+  }, [mapMode, updateExploredHexesFromHistory]);
+  
+  // 載入已探索區域和7天歷史統計（用於其他功能，如開拓者模式判斷）
   useEffect(() => {
     const loadExploredData = () => {
       // 載入已探索區域（用於開拓者模式判斷）
       const regions = explorationService.getExploredRegions();
       setExploredRegions(regions);
       
-      // 載入7天歷史點，計算訪問頻繁的區域（用於綠色正方形顯示）
-      // 只顯示訪問3次以上的區域，避免過於密集，讓設計更精緻
+      // 載入7天歷史點，計算訪問頻繁的區域（用於其他功能）
+      // 注意：H3 六邊形顯示已改為使用 exploredHexes，這裡保留用於其他功能
       const historyPoints = gpsHistoryService.getHistoryPointsByDays(7);
       const frequent = explorationService.getFrequentlyVisitedRegions(historyPoints, 3);
       setFrequentRegions(frequent);
@@ -421,9 +437,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         ref={mapRef}
         style={[mapStyle, { backgroundColor: '#1A1A1A' }]}
         initialRegion={getInitialRegion()}
-        showsUserLocation={!showHistoryTrail} // 查看歷史時隱藏藍點
+        showsUserLocation={actualMapMode === 'GAME'} // 只在主遊戲模式顯示藍點
         showsMyLocationButton={false}
-        followsUserLocation={isFollowing && !showHistoryTrail} // 根據 isFollowing 狀態決定是否跟隨，查看歷史時不跟隨
+        followsUserLocation={isFollowing && actualMapMode === 'GAME'} // 根據 isFollowing 狀態決定是否跟隨，只在主遊戲模式跟隨
         showsCompass={true}
         showsScale={true}
         mapType="standard"
@@ -567,22 +583,54 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }}
       >
-        {/* H3 六邊形網格已移除，專注於軌跡顯示 */}
+        {/* 主遊戲模式：顯示過去7天內走過的H3六邊形 */}
+        {actualMapMode === 'GAME' && Array.from(exploredHexes).map((h3Index) => {
+          const boundary = getH3CellBoundary(h3Index);
+          if (boundary.length === 0) return null;
+          
+          // 轉換邊界座標為 MapView Polygon 需要的格式
+          const coordinates = boundary.map(([lat, lng]) => ({
+            latitude: lat,
+            longitude: lng,
+          }));
+          
+          return (
+            <Polygon
+              key={`explored_hex_${h3Index}`}
+              coordinates={coordinates}
+              fillColor="rgba(34, 197, 94, 0.4)" // 探索綠，半透明
+              strokeColor="rgba(34, 197, 94, 0.8)" // 探索綠，較深的邊框
+              strokeWidth={1}
+            />
+          );
+        })}
 
-        {/* GPS 軌跡線（當前會話和歷史軌跡都顯示完整軌跡） */}
-        {showTrail && trailCoordinates.length > 1 && (
+        {/* 歷史軌跡模式：顯示軌跡線 */}
+        {actualMapMode === 'HISTORY' && showTrail && trailCoordinates.length > 1 && (
           <Polyline
             coordinates={trailCoordinates}
-            strokeColor={showHistoryTrail ? "#00FF00" : "#4CAF50"} // 歷史軌跡用亮綠色，當前會話用綠色
-            strokeWidth={showHistoryTrail ? 5 : 4} // 歷史軌跡稍微粗一點
+            strokeColor="#00FF00" // 歷史軌跡用亮綠色
+            strokeWidth={5}
             lineCap="round"
             lineJoin="round"
-            opacity={showHistoryTrail ? 0.9 : 1.0} // 歷史軌跡稍微透明
+            opacity={0.9}
+          />
+        )}
+        
+        {/* 主遊戲模式的當前會話軌跡（如果正在採集） */}
+        {actualMapMode === 'GAME' && isCollecting && showTrail && trailCoordinates.length > 1 && (
+          <Polyline
+            coordinates={trailCoordinates}
+            strokeColor="#4CAF50" // 當前會話用綠色
+            strokeWidth={4}
+            lineCap="round"
+            lineJoin="round"
+            opacity={1.0}
           />
         )}
 
-        {/* 歷史軌跡起點標記 */}
-        {showHistoryTrail && historyStartPoint && (
+        {/* 歷史軌跡起點標記（只在歷史模式顯示） */}
+        {actualMapMode === 'HISTORY' && historyStartPoint && (
           <Marker
             coordinate={historyStartPoint}
             title="起點"
@@ -594,8 +642,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           </Marker>
         )}
 
-        {/* 歷史軌跡終點標記 */}
-        {showHistoryTrail && historyEndPoint && (
+        {/* 歷史軌跡終點標記（只在歷史模式顯示） */}
+        {actualMapMode === 'HISTORY' && historyEndPoint && (
           <Marker
             coordinate={historyEndPoint}
             title="終點"
@@ -607,8 +655,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           </Marker>
         )}
 
-        {/* 當前位置標記（只在非歷史查看模式時顯示） */}
-        {!showHistoryTrail && currentLocation && (
+        {/* 當前位置標記（只在主遊戲模式顯示） */}
+        {actualMapMode === 'GAME' && currentLocation && (
           <Marker
             coordinate={{
               latitude: currentLocation.latitude,
@@ -624,8 +672,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         )}
       </MapView>
 
-      {/* 實時信息覆蓋層（只在非歷史查看模式時顯示） */}
-      {!showHistoryTrail && currentLocation && (
+      {/* 實時信息覆蓋層（只在主遊戲模式顯示） */}
+      {actualMapMode === 'GAME' && currentLocation && (
         <View style={styles.infoOverlay}>
           <Text style={styles.infoText}>
             速度: {currentLocation.speed ? (currentLocation.speed * 3.6).toFixed(1) : '0.0'} km/h
@@ -633,8 +681,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         </View>
       )}
 
-      {/* 歸位按鈕（只在非歷史查看模式時顯示） */}
-      {!showHistoryTrail && !isFollowing && currentLocation && (
+      {/* 歸位按鈕（只在主遊戲模式顯示） */}
+      {actualMapMode === 'GAME' && !isFollowing && currentLocation && (
         <View style={styles.recenterButtonContainer}>
           <TouchableOpacity
             style={styles.recenterButton}

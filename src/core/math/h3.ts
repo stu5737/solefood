@@ -32,6 +32,31 @@ const fallbackH3Module = {
     }
     return [0, 0];
   },
+  cellToBoundary: (h3Index: string) => {
+    // 降級實現：從 H3 ID 解析中心點並創建一個簡單的六邊形
+    const parts = h3Index.split('_');
+    if (parts.length === 4 && parts[0] === 'fallback') {
+      const res = parseInt(parts[1]);
+      const gridSize = Math.pow(10, res);
+      const lat = (parseInt(parts[2]) / gridSize) - 90;
+      const lng = (parseInt(parts[3]) / gridSize) - 180;
+      
+      // 根據解析度調整六邊形大小
+      const size = res >= 11 ? 0.0006 : res >= 10 ? 0.0012 : res >= 9 ? 0.0025 : 0.005;
+      
+      // 創建六邊形（6個頂點）
+      const angleStep = (2 * Math.PI) / 6;
+      const boundary: Array<[number, number]> = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = i * angleStep;
+        const latOffset = size * Math.cos(angle);
+        const lngOffset = size * Math.sin(angle) / Math.cos(lat * Math.PI / 180);
+        boundary.push([lat + latOffset, lng + lngOffset]);
+      }
+      return boundary;
+    }
+    return [];
+  },
   getResolution: () => H3_RESOLUTION,
   getBaseCellNumber: () => 0,
 };
@@ -77,11 +102,11 @@ function getH3ModuleSync() {
  * H3 解析度配置
  * 
  * 解析度越高，網格越小，精度越高
- * - Resolution 9: ~0.1 km² (適合城市探索)
- * - Resolution 10: ~0.05 km² (適合精確定位)
- * - Resolution 11: ~0.01 km² (適合高精度)
+ * - Resolution 9: ~0.1 km² (~174m 邊長)
+ * - Resolution 10: ~0.05 km² (~66m 邊長，推薦用於走路遊戲)
+ * - Resolution 11: ~0.01 km² (~25m 邊長，高精度)
  */
-export const H3_RESOLUTION = 11; // 使用 11，更高精度（~67m 網格），讓H3方格更小更精緻
+export const H3_RESOLUTION = 10; // 使用 10，適合走路遊戲（~66m 網格）
 
 /**
  * 將 GPS 座標轉換為 H3 網格 ID
@@ -137,6 +162,33 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
   } catch (error) {
     console.error('[H3] Failed to convert H3 to lat/lng:', error);
     return null;
+  }
+}
+
+/**
+ * 獲取 H3 網格的邊界座標（用於繪製多邊形）
+ * 
+ * @param h3Index - H3 網格 ID
+ * @returns 邊界座標陣列 [[lat, lng], ...]
+ */
+export function getH3CellBoundary(h3Index: string): Array<[number, number]> {
+  try {
+    const h3 = getH3ModuleSync();
+    if (!h3 || !h3.cellToBoundary) {
+      console.warn('[H3] cellToBoundary not available, using fallback');
+      return fallbackH3Module.cellToBoundary(h3Index);
+    }
+    const boundary = h3.cellToBoundary(h3Index);
+    return boundary || [];
+  } catch (error) {
+    console.error('[H3] Failed to get cell boundary:', error);
+    // 發生錯誤時使用降級實現
+    try {
+      return fallbackH3Module.cellToBoundary(h3Index);
+    } catch (fallbackError) {
+      console.error('[H3] Fallback also failed:', fallbackError);
+      return [];
+    }
   }
 }
 

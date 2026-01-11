@@ -63,8 +63,10 @@ interface SessionState {
   lastDailyReset: string;       // 最後重置日期 (YYYY-MM-DD)
   // 新增：臨時擴容狀態
   isTempExpanded: boolean;       // 是否啟用臨時擴容（+50%）
-  // 新增：登入狀態檢查標誌
-  hasCheckedLoginStatus: boolean;  // 是否已檢查登入狀態（防止重複檢查）
+  // 新增：地圖模式
+  mapMode: 'GAME' | 'HISTORY';   // 地圖模式：GAME=主遊戲探索，HISTORY=歷史軌跡
+  // 新增：已探索的 H3 六邊形網格（過去7天內走過的區域）
+  exploredHexes: Set<string>;    // 已探索的 H3 索引集合
 }
 
 /**
@@ -226,6 +228,32 @@ interface SessionActions {
    * 處理登入（用戶今天登入）
    */
   processLogin: () => void;
+  
+  /**
+   * 切換地圖模式
+   * 
+   * @param mode - 地圖模式：'GAME' 或 'HISTORY'
+   */
+  setMapMode: (mode: 'GAME' | 'HISTORY') => void;
+  
+  /**
+   * 發現新的 H3 六邊形區域
+   * 
+   * 當玩家進入新的六邊形時調用
+   * 如果該區域未被探索，加入 exploredHexes 並返回 true
+   * 
+   * @param hexIndex - H3 索引
+   * @returns 是否為新發現的區域
+   */
+  discoverNewHex: (hexIndex: string) => boolean;
+  
+  /**
+   * 從7天歷史軌跡更新已探索的H3六邊形
+   * 
+   * 從GPS歷史服務中獲取過去7天的所有軌跡點
+   * 將這些點轉換為H3索引並存入exploredHexes
+   */
+  updateExploredHexesFromHistory: () => void;
 }
 
 type SessionStore = SessionState & SessionActions;
@@ -289,6 +317,10 @@ const initialState: SessionState = {
   lastDailyReset: getTodayString(),
   // 新增：臨時擴容狀態
   isTempExpanded: false,
+  // 新增：地圖模式（預設為 GAME）
+  mapMode: 'GAME' as const,
+  // 新增：已探索的 H3 六邊形網格（使用 Set 存儲）
+  exploredHexes: new Set<string>(),
 };
 
 export const useSessionStore = create<SessionStore>((set, get) => ({
@@ -915,5 +947,81 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     });
     
     console.log('[SessionStore] Pending encounter cleared');
+  },
+  
+  /**
+   * 切換地圖模式
+   * 
+   * @param mode - 地圖模式：'GAME' 或 'HISTORY'
+   */
+  setMapMode: (mode: 'GAME' | 'HISTORY') => {
+    set({ mapMode: mode });
+    console.log('[SessionStore] Map mode set to', mode);
+  },
+  
+  /**
+   * 發現新的 H3 六邊形區域
+   * 
+   * 當玩家進入新的六邊形時調用
+   * 如果該區域未被探索，加入 exploredHexes 並返回 true
+   * 
+   * @param hexIndex - H3 索引
+   * @returns 是否為新發現的區域
+   */
+  discoverNewHex: (hexIndex: string) => {
+    if (!hexIndex) {
+      return false;
+    }
+    
+    const state = get();
+    if (state.exploredHexes.has(hexIndex)) {
+      // 已經探索過
+      return false;
+    }
+    
+    // 新發現的區域
+    const newExploredHexes = new Set(state.exploredHexes);
+    newExploredHexes.add(hexIndex);
+    
+    set({ exploredHexes: newExploredHexes });
+    
+    console.log('[SessionStore] New hex discovered:', hexIndex, 'Total explored:', newExploredHexes.size);
+    
+    return true;
+  },
+  
+  /**
+   * 從7天歷史軌跡更新已探索的H3六邊形
+   * 
+   * 從GPS歷史服務中獲取過去7天的所有軌跡點
+   * 將這些點轉換為H3索引並存入exploredHexes
+   */
+  updateExploredHexesFromHistory: () => {
+    try {
+      const { gpsHistoryService } = require('../services/gpsHistory');
+      const { latLngToH3, H3_RESOLUTION } = require('../core/math/h3');
+      
+      // 獲取過去7天的所有GPS點
+      const historyPoints = gpsHistoryService.getHistoryPointsByDays(7);
+      
+      // 轉換為H3索引並去重
+      const hexSet = new Set<string>();
+      
+      for (const point of historyPoints) {
+        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+        if (h3Index) {
+          hexSet.add(h3Index);
+        }
+      }
+      
+      set({ exploredHexes: hexSet });
+      
+      console.log('[SessionStore] Explored hexes updated from history', {
+        historyPointsCount: historyPoints.length,
+        exploredHexesCount: hexSet.size,
+      });
+    } catch (error) {
+      console.error('[SessionStore] Failed to update explored hexes from history:', error);
+    }
   },
 }));
