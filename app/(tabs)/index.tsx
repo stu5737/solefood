@@ -5,7 +5,7 @@
  * 第一步：建立最乾淨的地圖底層
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -17,7 +17,9 @@ import {
   ScrollView,
   Dimensions,
   Switch,
+  Animated,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { RealTimeMap } from '../../src/components/map/RealTimeMap';
 import { SimulatorMode } from '../../src/components/game/SimulatorMode';
 import { DevDashboard } from '../../src/components/game/DevDashboard';
@@ -25,10 +27,14 @@ import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
 import { locationService } from '../../src/services/location';
 import { gpsHistoryService } from '../../src/services/gpsHistory';
 import { explorationService } from '../../src/services/exploration';
+import { bgTrackingNotification } from '../../src/services/backgroundTrackingNotification';
 import { entropyEngine } from '../../src/core/entropy/engine';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import type { CollectionSession } from '../../src/services/gpsHistory';
 import type { MovementInput } from '../../src/core/entropy/events';
+
+// 創建動畫化的 TouchableOpacity 組件
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
 export default function GameScreen() {
   // 從 Store 獲取地圖模式和更新方法
@@ -41,6 +47,12 @@ export default function GameScreen() {
   const [allSessions, setAllSessions] = useState<CollectionSession[]>([]); // 所有歷史會話
   const [isSimulatorMode, setIsSimulatorMode] = useState(false); // 模式切換：false=戶外模式, true=模擬器模式
   const [showDevDashboard, setShowDevDashboard] = useState(true); // 開發者控制台顯示開關（默認開啟，用於測試）
+
+  // 按鈕動畫值（scale: 1 -> 0.9）
+  const scanButtonScale = useRef(new Animated.Value(1)).current;
+  const historyButtonScale = useRef(new Animated.Value(1)).current;
+  const unloadButtonScale = useRef(new Animated.Value(1)).current;
+  const picnicButtonScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     // 初始化服務並獲取位置
@@ -59,10 +71,17 @@ export default function GameScreen() {
           await locationService.requestPermissions();
         }
         
-        // 獲取初始位置
-        const location = await locationService.getCurrentLocation();
-        if (location) {
-          console.log('[GameScreen] Initial location:', location);
+        // 獲取初始位置（如果失敗也繼續，因為 watchPositionAsync 會持續獲取）
+        try {
+          const location = await locationService.getCurrentLocation();
+          if (location) {
+            console.log('[GameScreen] Initial location:', location);
+      } else {
+            console.warn('[GameScreen] Failed to get initial location, but tracking will continue via watchPositionAsync');
+          }
+    } catch (error) {
+          console.warn('[GameScreen] Error getting initial location:', error);
+          // 繼續執行，因為 watchPositionAsync 會持續獲取位置
         }
         
         // 載入所有歷史會話
@@ -70,7 +89,7 @@ export default function GameScreen() {
         setAllSessions(sessions);
         
         setIsReady(true);
-      } catch (error) {
+    } catch (error) {
         console.error('[GameScreen] Initialization error:', error);
         setIsReady(true); // 即使失敗也繼續，讓地圖顯示
       }
@@ -112,18 +131,18 @@ export default function GameScreen() {
                 trackColor={{ false: '#4CAF50', true: '#9C27B0' }}
                 thumbColor="#FFFFFF"
                 ios_backgroundColor="#3e3e3e"
-              />
-            </View>
+          />
+        </View>
             <Text style={styles.modeLabel}>🎮</Text>
             {/* 開發者控制台開關（縮小版） */}
-            <TouchableOpacity
+          <TouchableOpacity
               style={styles.devToggleButtonMini}
               onPress={() => setShowDevDashboard(!showDevDashboard)}
-            >
+          >
               <Text style={styles.devToggleTextMini}>
                 {showDevDashboard ? '🔧' : '⚙️'}
               </Text>
-            </TouchableOpacity>
+          </TouchableOpacity>
           </View>
         </SafeAreaView>
       )}
@@ -155,6 +174,8 @@ export default function GameScreen() {
               const sessionId = gpsHistoryService.startSession();
               console.log('[GameScreen] Started collection session (simulator):', sessionId);
               setIsCollecting(true);
+              // 啟動背景定位通知
+              bgTrackingNotification.startTracking();
             }}
             onEndCollection={(type) => {
               gpsHistoryService.endSession(type);
@@ -162,6 +183,8 @@ export default function GameScreen() {
               const sessions = gpsHistoryService.getAllSessions();
               setAllSessions(sessions);
               console.log(`[GameScreen] Ended collection session (simulator): ${type}`);
+              // 停止背景定位通知
+              bgTrackingNotification.stopTracking();
             }}
           />
           
@@ -169,78 +192,150 @@ export default function GameScreen() {
           {showDevDashboard && (
             <View style={styles.devDashboardOverlay}>
               <DevDashboard visible={showDevDashboard} />
-            </View>
+        </View>
           )}
         </>
       )}
 
       {/* ========== 採集控制按鈕層（只在戶外模式且未查看歷史時顯示） ========== */}
       {isReady && !isSimulatorMode && !showHistoryTrail && (
-        <SafeAreaView style={styles.controlOverlay} pointerEvents="box-none">
-          <View style={styles.controlContainer}>
-            {!isCollecting ? (
-              // 未採集：顯示開始採集按鈕、歷史軌跡按鈕和模擬器快捷按鈕
-              <View style={styles.startButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.startButton]}
-                  onPress={() => {
-                    const sessionId = gpsHistoryService.startSession();
-                    console.log('[GameScreen] Started collection session:', sessionId);
-                    setIsCollecting(true);
+        <>
+          {/* 左側功能工具列 */}
+          <View style={styles.sideToolbar}>
+            {allSessions.length > 0 && (
+              <AnimatedTouchableOpacity
+                style={[
+                  styles.sideToolButton,
+                  { transform: [{ scale: historyButtonScale }] }
+                ]}
+                onPressIn={() => {
+                  Animated.spring(historyButtonScale, {
+                    toValue: 0.9,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(historyButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  const sessions = gpsHistoryService.getAllSessions();
+                  setAllSessions(sessions);
+                  if (sessions.length > 0) {
+                    setSelectedSessionId(sessions[0].sessionId);
+                    setShowHistoryTrail(true);
+                  }
+                }}
+              >
+                <Ionicons name="map-outline" size={24} color="#FFFFFF" />
+              </AnimatedTouchableOpacity>
+            )}
+            {isCollecting && (
+              <>
+                <AnimatedTouchableOpacity
+                  style={[
+                    styles.sideToolButton,
+                    styles.unloadToolButton,
+                    { transform: [{ scale: unloadButtonScale }] }
+                  ]}
+                  onPressIn={() => {
+                    Animated.spring(unloadButtonScale, {
+                      toValue: 0.9,
+                      useNativeDriver: true,
+                    }).start();
                   }}
-                >
-                  <Text style={styles.buttonText}>▶ 開始採集</Text>
-                </TouchableOpacity>
-                {allSessions.length > 0 && (
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.historyButton]}
-                    onPress={() => {
-                      // 載入所有歷史會話並打開彈窗
-                      const sessions = gpsHistoryService.getAllSessions();
-                      setAllSessions(sessions);
-                      if (sessions.length > 0) {
-                        setSelectedSessionId(sessions[0].sessionId);
-                        setShowHistoryTrail(true);
-                      }
-                    }}
-                  >
-                    <Text style={styles.buttonText}>📜 歷史軌跡</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-              // 採集中：顯示結束選項
-              <View style={styles.endButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.endButton, styles.picnicButton]}
-                  onPress={() => {
-                    gpsHistoryService.endSession('picnic');
-                    setIsCollecting(false);
-                    // 重新載入會話列表
-                    const sessions = gpsHistoryService.getAllSessions();
-                    setAllSessions(sessions);
-                    console.log('[GameScreen] Ended collection session: picnic');
+                  onPressOut={() => {
+                    Animated.spring(unloadButtonScale, {
+                      toValue: 1,
+                      useNativeDriver: true,
+                    }).start();
                   }}
-                >
-                  <Text style={styles.buttonText}>🍽️ 就地野餐</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.endButton, styles.unloadButton]}
                   onPress={() => {
                     gpsHistoryService.endSession('unload');
                     setIsCollecting(false);
-                    // 重新載入會話列表
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session: unload');
+                    // 停止背景定位通知
+                    bgTrackingNotification.stopTracking();
                   }}
                 >
-                  <Text style={styles.buttonText}>🏪 餐廳卸貨</Text>
-                </TouchableOpacity>
-              </View>
+                  <Ionicons name="car-outline" size={24} color="#FFFFFF" />
+                </AnimatedTouchableOpacity>
+                <AnimatedTouchableOpacity
+                  style={[
+                    styles.sideToolButton,
+                    styles.picnicToolButton,
+                    { transform: [{ scale: picnicButtonScale }] }
+                  ]}
+                  onPressIn={() => {
+                    Animated.spring(picnicButtonScale, {
+                      toValue: 0.9,
+                      useNativeDriver: true,
+                    }).start();
+                  }}
+                  onPressOut={() => {
+                    Animated.spring(picnicButtonScale, {
+                      toValue: 1,
+                      useNativeDriver: true,
+                    }).start();
+                  }}
+                  onPress={() => {
+                    gpsHistoryService.endSession('picnic');
+                    setIsCollecting(false);
+                    const sessions = gpsHistoryService.getAllSessions();
+                    setAllSessions(sessions);
+                    console.log('[GameScreen] Ended collection session: picnic');
+                    // 停止背景定位通知
+                    bgTrackingNotification.stopTracking();
+                  }}
+                >
+                  <Ionicons name="restaurant-outline" size={24} color="#FFFFFF" />
+                </AnimatedTouchableOpacity>
+              </>
             )}
           </View>
-        </SafeAreaView>
+
+          {/* 底部中央主按鈕（Scanner） */}
+          <View style={styles.scanButtonContainer}>
+            <AnimatedTouchableOpacity
+              style={[
+                styles.scanButton,
+                isCollecting && styles.scanButtonActive,
+                { transform: [{ scale: scanButtonScale }] }
+              ]}
+              onPressIn={() => {
+                Animated.spring(scanButtonScale, {
+                  toValue: 0.9,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(scanButtonScale, {
+                  toValue: 1,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={() => {
+                if (!isCollecting) {
+                  const sessionId = gpsHistoryService.startSession();
+                  console.log('[GameScreen] Started collection session:', sessionId);
+                  setIsCollecting(true);
+                  // 啟動背景定位通知
+                  bgTrackingNotification.startTracking();
+                }
+              }}
+            >
+              <Ionicons 
+                name={isCollecting ? "stop-circle" : "radio-button-on"} 
+                size={32} 
+                color="#FFFFFF" 
+              />
+            </AnimatedTouchableOpacity>
+        </View>
+        </>
       )}
 
       {/* ========== 模擬器模式的採集控制按鈕 ========== */}
@@ -248,19 +343,21 @@ export default function GameScreen() {
         <SafeAreaView style={styles.controlOverlay} pointerEvents="box-none">
           <View style={styles.controlContainer}>
             {!isCollecting ? (
-              <TouchableOpacity
+          <TouchableOpacity
                 style={[styles.actionButton, styles.startButton]}
                 onPress={() => {
                   const sessionId = gpsHistoryService.startSession();
                   console.log('[GameScreen] Started collection session (simulator):', sessionId);
                   setIsCollecting(true);
+                  // 啟動背景定位通知
+                  bgTrackingNotification.startTracking();
                 }}
               >
                 <Text style={styles.buttonText}>▶ 開始採集</Text>
-              </TouchableOpacity>
+          </TouchableOpacity>
             ) : (
               <View style={styles.endButtonContainer}>
-                <TouchableOpacity
+          <TouchableOpacity
                   style={[styles.actionButton, styles.endButton, styles.picnicButton]}
                   onPress={() => {
                     gpsHistoryService.endSession('picnic');
@@ -268,11 +365,13 @@ export default function GameScreen() {
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session (simulator): picnic');
+                    // 停止背景定位通知
+                    bgTrackingNotification.stopTracking();
                   }}
                 >
                   <Text style={styles.buttonText}>🍽️ 就地野餐</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
+          </TouchableOpacity>
+          <TouchableOpacity
                   style={[styles.actionButton, styles.endButton, styles.unloadButton]}
                   onPress={() => {
                     gpsHistoryService.endSession('unload');
@@ -280,11 +379,13 @@ export default function GameScreen() {
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session (simulator): unload');
+                    // 停止背景定位通知
+                    bgTrackingNotification.stopTracking();
                   }}
                 >
                   <Text style={styles.buttonText}>🏪 餐廳卸貨</Text>
-                </TouchableOpacity>
-              </View>
+          </TouchableOpacity>
+        </View>
             )}
           </View>
         </SafeAreaView>
@@ -304,7 +405,7 @@ export default function GameScreen() {
           <SafeAreaView style={styles.modalSafeArea}>
             {/* 彈窗標題欄 */}
             <View style={styles.modalHeader}>
-              <TouchableOpacity
+          <TouchableOpacity
                 style={styles.modalCloseButton}
                 onPress={() => {
                   setShowHistoryTrail(false);
@@ -312,7 +413,7 @@ export default function GameScreen() {
                 }}
               >
                 <Text style={styles.modalCloseText}>✕ 關閉</Text>
-              </TouchableOpacity>
+          </TouchableOpacity>
               <Text style={styles.modalTitle}>歷史軌跡 ({allSessions.length})</Text>
             </View>
 
@@ -325,7 +426,7 @@ export default function GameScreen() {
                   ? `${Math.floor(session.duration / 60)}:${Math.floor(session.duration % 60).toString().padStart(2, '0')}`
                   : '進行中';
                 return (
-                  <TouchableOpacity
+          <TouchableOpacity
                     key={session.sessionId}
                     style={[
                       styles.modalSessionItem,
@@ -340,7 +441,7 @@ export default function GameScreen() {
                       {session.totalDistance.toFixed(2)} km · {durationStr}
                       {session.endType === 'picnic' ? ' · 🍽️ 就地野餐' : session.endType === 'unload' ? ' · 🏪 餐廳卸貨' : ''}
                     </Text>
-                  </TouchableOpacity>
+          </TouchableOpacity>
                 );
               })}
             </ScrollView>
@@ -355,7 +456,7 @@ export default function GameScreen() {
                     return (
                       <View style={styles.modalStatsContainer}>
                         <TrailStatsPanel trail={session.points} />
-                      </View>
+        </View>
                     );
                   }
                   return null;
@@ -369,13 +470,13 @@ export default function GameScreen() {
                     selectedSessionId={selectedSessionId}
                     showHistoryTrail={true}
                   />
-                </View>
+          </View>
               </>
             )}
           </SafeAreaView>
-        </View>
+          </View>
       </Modal>
-    </View>
+          </View>
   );
 }
 
@@ -439,6 +540,65 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: '#1A1A1A', // 深色地圖背景
+  },
+  // 左側功能工具列
+  sideToolbar: {
+    position: 'absolute',
+    left: 16,
+    bottom: 180, // 在羅盤按鈕上方
+    flexDirection: 'column',
+    gap: 12,
+    zIndex: 1000,
+  },
+  sideToolButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  unloadToolButton: {
+    backgroundColor: 'rgba(33, 150, 243, 0.7)', // 半透明藍色
+  },
+  picnicToolButton: {
+    backgroundColor: 'rgba(255, 152, 0, 0.7)', // 半透明橙色
+  },
+  // 底部中央主按鈕（Scanner）
+  scanButtonContainer: {
+    position: 'absolute',
+    bottom: 32,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 1000,
+    pointerEvents: 'box-none',
+  },
+  scanButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#FFB300', // 黃色/橙色
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FFB300',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 8,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  scanButtonActive: {
+    backgroundColor: '#F44336', // 紅色：停止採集
+    shadowColor: '#F44336',
   },
   controlOverlay: {
     position: 'absolute',

@@ -7,6 +7,7 @@
 
 import { LocationData } from './location';
 import { saveData, loadData, STORAGE_KEYS } from '../utils/storage';
+import { AppState, AppStateStatus } from 'react-native';
 
 /**
  * GPS 歷史點
@@ -48,6 +49,8 @@ class GPSHistoryService {
   private readonly HISTORY_DAYS = 7; // 保留 7 天的歷史
   private initialized: boolean = false;
   private saveCounter: number = 0; // 計數器，用於控制保存頻率
+  private backgroundPointCount: number = 0; // 背景模式下記錄的點數
+  private appState: AppStateStatus = AppState.currentState; // App 狀態
 
   /**
    * 初始化：從持久化存儲載入歷史
@@ -78,9 +81,33 @@ class GPSHistoryService {
         console.log(`[GPSHistoryService] Loaded ${this.sessions.size} collection sessions`);
       }
       
+      // 確保 appState 有初始值（在設置監聽器之前）
+      if (!this.appState) {
+        this.appState = AppState.currentState;
+      }
+      
+      // 監聽 App 狀態變化
+      AppState.addEventListener('change', (nextAppState) => {
+        const wasBackground = this.appState && this.appState.match(/inactive|background/);
+        const isNowForeground = nextAppState === 'active';
+        
+        if (wasBackground && isNowForeground) {
+          console.log(`🟢 [GPSHistoryService] App entered FOREGROUND - Background points recorded: ${this.backgroundPointCount}`);
+          this.backgroundPointCount = 0;
+        } else if (nextAppState.match(/inactive|background/)) {
+          console.log('🔴 [GPSHistoryService] App entered BACKGROUND - GPS recording should continue');
+        }
+        
+        this.appState = nextAppState;
+      });
+      
       this.initialized = true;
     } catch (error) {
       console.error('[GPSHistoryService] Failed to load GPS history:', error);
+      // 即使失敗也確保 appState 有值
+      if (!this.appState) {
+        this.appState = AppState.currentState;
+      }
       this.initialized = true; // 即使失敗也標記為已初始化
     }
   }
@@ -167,6 +194,17 @@ class GPSHistoryService {
     // 過濾太近的點（減少存儲空間），但第一個點始終記錄
     if (this.currentSessionPoints.length > 0 && distance < this.MIN_DISTANCE_THRESHOLD) {
       return;
+    }
+
+    // 判斷是否在背景模式（添加 null 檢查）
+    const isBackground = this.appState && this.appState.match(/inactive|background/);
+    if (isBackground) {
+      this.backgroundPointCount++;
+      // 每 20 個背景點記錄一次日誌
+      if (this.backgroundPointCount % 20 === 0 || this.backgroundPointCount === 1) {
+        const timeStr = new Date(location.timestamp).toLocaleTimeString();
+        console.log(`📝 [BG-Record] ${timeStr} | Recorded GPS point #${this.backgroundPointCount} | Session: ${this.currentSessionId} | Total points: ${this.currentSessionPoints.length + 1}`);
+      }
     }
 
     const point: GPSHistoryPoint = {

@@ -59,6 +59,52 @@ const fallbackH3Module = {
   },
   getResolution: () => H3_RESOLUTION,
   getBaseCellNumber: () => 0,
+  cellToChildren: (h3Index: string, resolution: number) => {
+    // 降級實現：從 Res 10 轉換為 Res 11
+    // 一個 Res 10 格子包含 7 個 Res 11 格子（H3 的父子關係）
+    const parts = h3Index.split('_');
+    if (parts.length === 4 && parts[0] === 'fallback') {
+      const currentRes = parseInt(parts[1]);
+      if (currentRes === resolution - 1) {
+        // 如果目標分辨率比當前分辨率高 1，則生成 7 個子格子
+        const gridSize = Math.pow(10, currentRes);
+        const lat = (parseInt(parts[2]) / gridSize) - 90;
+        const lng = (parseInt(parts[3]) / gridSize) - 180;
+        
+        // 生成 7 個子格子（中心 + 6 個方向）
+        const childSize = 0.0003; // Res 11 的子格子偏移量（約為 Res 10 的 1/2）
+        const children: string[] = [];
+        
+        // 中心格子
+        const childGridSize = Math.pow(10, resolution);
+        const centerLatGrid = Math.floor((lat + 90) * childGridSize);
+        const centerLngGrid = Math.floor((lng + 180) * childGridSize);
+        children.push(`fallback_${resolution}_${centerLatGrid}_${centerLngGrid}`);
+        
+        // 6 個方向的子格子（簡化實現，使用固定偏移）
+        const offsets = [
+          [childSize, 0],
+          [childSize * 0.5, childSize * 0.866],
+          [-childSize * 0.5, childSize * 0.866],
+          [-childSize, 0],
+          [-childSize * 0.5, -childSize * 0.866],
+          [childSize * 0.5, -childSize * 0.866],
+        ];
+        
+        for (const [latOffset, lngOffset] of offsets) {
+          const childLat = lat + latOffset;
+          const childLng = lng + lngOffset / Math.cos(lat * Math.PI / 180);
+          const childLatGrid = Math.floor((childLat + 90) * childGridSize);
+          const childLngGrid = Math.floor((childLng + 180) * childGridSize);
+          children.push(`fallback_${resolution}_${childLatGrid}_${childLngGrid}`);
+        }
+        
+        return children;
+      }
+    }
+    // 如果不是 fallback 格式或分辨率不匹配，返回空數組
+    return [];
+  },
 };
 
 async function getH3Module() {
@@ -106,7 +152,7 @@ function getH3ModuleSync() {
  * - Resolution 10: ~0.05 km² (~66m 邊長，推薦用於走路遊戲)
  * - Resolution 11: ~0.01 km² (~25m 邊長，高精度)
  */
-export const H3_RESOLUTION = 10; // 使用 10，適合走路遊戲（~66m 網格）
+export const H3_RESOLUTION = 11; // Res 11: 邊長約 25m，更符合人行/跑步的探索尺度（約四線道馬路寬度）
 
 /**
  * 將 GPS 座標轉換為 H3 網格 ID

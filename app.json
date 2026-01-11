@@ -7,16 +7,39 @@
     "userInterfaceStyle": "light",
     "scheme": "solefood",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
+          "locationAlwaysPermission": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
+          "locationWhenInUsePermission": "此應用需要位置權限，以記錄您的 GPS 軌跡。",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ]
     ],
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
-      "bundleIdentifier": "com.solefood.mvp"
+      "bundleIdentifier": "com.solefood.mvp",
+      "infoPlist": {
+        "UIBackgroundModes": ["location", "fetch"],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
+        "NSLocationAlwaysUsageDescription": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
+        "NSLocationWhenInUseUsageDescription": "此應用需要位置權限，以記錄您的 GPS 軌跡。"
+      }
     },
     "android": {
-      "package": "com.solefood.mvp"
+      "package": "com.solefood.mvp",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK"
+      ]
     }
   }
 }

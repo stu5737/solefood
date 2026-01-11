@@ -42,10 +42,24 @@ async function isSecureStoreAvailable(): Promise<boolean> {
 
 /**
  * 安全存儲數據
+ * 
+ * 注意：SecureStore 有 2048 字節的限制
+ * 對於大數據（如 GPS 歷史），自動使用 AsyncStorage
  */
 export async function saveData<T>(key: string, data: T): Promise<void> {
   try {
     const jsonData = JSON.stringify(data);
+    // 估算 UTF-8 字節大小：每個字符約 1-4 字節，JSON 通常使用 ASCII，保守估算為 length * 2
+    // 這比實際 UTF-8 大小更保守，但足夠用於判斷是否超過 SecureStore 限制
+    const estimatedByteSize = jsonData.length * 2;
+    const SECURE_STORE_MAX_SIZE = 2048; // SecureStore 的最大大小（字節）
+    
+    // 如果數據超過 SecureStore 限制，直接使用 AsyncStorage
+    if (estimatedByteSize > SECURE_STORE_MAX_SIZE) {
+      await AsyncStorage.setItem(key, jsonData);
+      return;
+    }
+    
     const useSecureStore = await isSecureStoreAvailable();
     
     if (useSecureStore) {
@@ -61,15 +75,27 @@ export async function saveData<T>(key: string, data: T): Promise<void> {
 
 /**
  * 安全讀取數據
+ * 
+ * 注意：大數據（如 GPS 歷史）可能存儲在 AsyncStorage 中
+ * 因此先嘗試從 SecureStore 讀取，如果失敗則從 AsyncStorage 讀取
  */
 export async function loadData<T>(key: string): Promise<T | null> {
   try {
     const useSecureStore = await isSecureStoreAvailable();
-    let jsonData: string | null;
+    let jsonData: string | null = null;
     
+    // 先嘗試從 SecureStore 讀取
     if (useSecureStore) {
-      jsonData = await SecureStore.getItemAsync(key);
-    } else {
+      try {
+        jsonData = await SecureStore.getItemAsync(key);
+      } catch (secureError) {
+        // SecureStore 讀取失敗，可能是數據不存在或數據太大
+        // 繼續嘗試 AsyncStorage
+      }
+    }
+    
+    // 如果 SecureStore 中沒有數據，嘗試從 AsyncStorage 讀取
+    if (!jsonData) {
       jsonData = await AsyncStorage.getItem(key);
     }
     

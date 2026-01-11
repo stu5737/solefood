@@ -11,6 +11,7 @@ import { calculateValue } from '../core/math/valuation';
 import type { Item } from '../types/item';
 import type { LuckGradient, DeepZoneState, PathfinderState } from '../types/game';
 import { DEEP_ZONE, ITEM_DISTRIBUTION, RESCUE_ADS } from '../utils/constants';
+import { getH3CellChildren, getH3Resolution, H3_RESOLUTION } from '../core/math/h3';
 
 /**
  * 救援廣告類型
@@ -999,16 +1000,52 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   updateExploredHexesFromHistory: () => {
     try {
       const { gpsHistoryService } = require('../services/gpsHistory');
-      const { latLngToH3, H3_RESOLUTION } = require('../core/math/h3');
+      const { latLngToH3 } = require('../core/math/h3');
+      
+      // 首先檢查並遷移舊的 Res 10 數據到 Res 11
+      const state = get();
+      const oldHexes = Array.from(state.exploredHexes);
+      if (oldHexes.length > 0) {
+        // 檢查是否有 Res 10 的格子需要遷移
+        const res10Hexes = oldHexes.filter((hex) => {
+          // 從 fallback ID 解析分辨率
+          if (hex.startsWith('fallback_')) {
+            const parts = hex.split('_');
+            if (parts.length === 4) {
+              const res = parseInt(parts[1]);
+              return res === 10;
+            }
+          }
+          return false;
+        });
+        
+        if (res10Hexes.length > 0) {
+          console.log(`[SessionStore] Migrating ${res10Hexes.length} Res 10 hexes to Res 11...`);
+          const migratedHexes = new Set<string>(state.exploredHexes);
+          
+          // 將 Res 10 格子轉換為 Res 11 格子
+          for (const res10Hex of res10Hexes) {
+            const children = getH3CellChildren(res10Hex, 11);
+            for (const childHex of children) {
+              migratedHexes.add(childHex);
+            }
+            // 移除舊的 Res 10 格子
+            migratedHexes.delete(res10Hex);
+          }
+          
+          set({ exploredHexes: migratedHexes });
+          console.log(`[SessionStore] Migration complete. New hex count: ${migratedHexes.size}`);
+        }
+      }
       
       // 獲取過去7天的所有GPS點
       const historyPoints = gpsHistoryService.getHistoryPointsByDays(7);
       
       // 轉換為H3索引並去重
-      const hexSet = new Set<string>();
+      const hexSet = new Set<string>(get().exploredHexes); // 從已遷移的格子開始
       
       for (const point of historyPoints) {
-        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION); // 使用新的 Res 11
         if (h3Index) {
           hexSet.add(h3Index);
         }

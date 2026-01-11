@@ -6,17 +6,25 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Animated, Dimensions, Platform } from 'react-native';
 import MapView, { Marker, Polyline, Region, Polygon } from 'react-native-maps';
+import * as Location from 'expo-location';
 import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
 import { latLngToH3, H3_RESOLUTION, getH3CellBoundary } from '../../core/math/h3';
 import { useSessionStore } from '../../stores/sessionStore';
+import { UserMarker } from './UserMarker';
 import type { LocationData } from '../../services/location';
 import type { ExploredRegion } from '../../services/exploration';
 import type { MovementInput } from '../../core/entropy/events';
+
+// ⭐ Android 修復：定義標準縮放常數（適合走路遊戲的距離）
+const DEFAULT_ZOOM_DELTA = {
+  latitudeDelta: 0.002, // 非常近，約 200~300 公尺範圍，適合看清楚 H3 格子
+  longitudeDelta: 0.002 * (Dimensions.get('window').width / Dimensions.get('window').height), // 根據螢幕長寬比自動計算
+};
 
 interface RealTimeMapProps {
   // 是否顯示 GPS 軌跡線
@@ -63,18 +71,73 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   const totalDistance = useSessionStore((state) => state.totalDistance);
   
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
+  const [markerKey, setMarkerKey] = useState(0); // ⭐ Android 強力修復：用於強制觸發 UserMarker re-render
   const [trailCoordinates, setTrailCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [historyStartPoint, setHistoryStartPoint] = useState<{ latitude: number; longitude: number } | null>(null);
   const [historyEndPoint, setHistoryEndPoint] = useState<{ latitude: number; longitude: number } | null>(null);
   const [exploredRegions, setExploredRegions] = useState<ExploredRegion[]>([]);
   const [frequentRegions, setFrequentRegions] = useState<Array<{ h3Index: string; visitCount: number }>>([]); // 7天內訪問頻繁的區域
   const [currentRegion, setCurrentRegion] = useState<Region | null>(null);
-  const [isFollowing, setIsFollowing] = useState(true); // 預設開啟跟隨模式
+  // ⭐ Android 修復：增加 mapReady 狀態鎖
+  const [isMapReady, setIsMapReady] = useState(false);
+  // ⭐ Android 修復：追蹤是否已經執行過初次聚焦
+  const hasInitialFocusRef = useRef(false);
+  // 跟隨模式：NONE（手動模式）、USER（跟隨用戶，北方朝上）、COMPASS（跟隨用戶，地圖隨手機旋轉）
+  const [followMode, setFollowMode] = useState<'NONE' | 'USER' | 'COMPASS'>('USER'); // 預設為 USER 模式
+  const [heading, setHeading] = useState<number>(0); // 手機方位（0-360度，用於 COMPASS 模式）
   const mapRef = useRef<MapView>(null);
   const subscriptionRef = useRef<{ remove: () => void } | null>(null);
+  const headingSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const lastMapHeadingRef = useRef<number>(0); // 上一次應用到地圖的方位（用於防抖動）
+  
+  // Null Guard：保存上一次有效的 location（防止 Marker 消失）
+  const lastValidLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  
+  // 穩定的 coordinate 對象（使用 ref 避免每次 render 都創建新對象）
+  const stableCoordinateRef = useRef<{ latitude: number; longitude: number } | null>(null);
   
   // 根據 showHistoryTrail 確定實際的地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
+
+  // ⭐ Android 修復：實作「初次聚焦」邏輯（雙重鎖定機制）
+  useEffect(() => {
+    // 只有在地圖準備好、有位置、且還沒執行過初次聚焦時才執行
+    if (!isMapReady || !currentLocation || hasInitialFocusRef.current || showHistoryTrail) {
+      return;
+    }
+
+    // ⭐ Android 專用 Hack：在 animateCamera 外層包一個 setTimeout
+    // 舊手機需要這 500ms 緩衝來完成 Layout 計算，否則指令會無效
+    const focusDelay = Platform.OS === 'android' ? 500 : 100;
+    
+    setTimeout(() => {
+      if (mapRef.current && currentLocation && !hasInitialFocusRef.current) {
+        hasInitialFocusRef.current = true;
+        
+        // 使用 animateCamera 而不是 animateToRegion（更穩定）
+        mapRef.current.animateCamera({
+          center: {
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+          },
+          zoom: 17, // ⭐ 對應 Google Maps 的放大倍率（適合走路遊戲）
+          altitude: Platform.OS === 'ios' ? 1000 : undefined, // ⭐ 僅 iOS 需要，設為較低數值以防太遠
+          heading: 0, // 北方朝上
+        }, {
+          duration: 1000,
+        });
+        
+        setFollowMode('USER');
+        console.log('[RealTimeMap] Initial focus executed: map ready + location available, USER mode enabled');
+      }
+    }, focusDelay);
+  }, [isMapReady, currentLocation, showHistoryTrail]);
+
+  // ⭐ Android 修復：地圖準備完成的 callback
+  const handleMapReady = () => {
+    setIsMapReady(true);
+    console.log('[RealTimeMap] Map ready callback triggered');
+  };
 
   // 獲取 H3 網格邊界（用於顯示已探索區域）
   // 注意：在 React Native 中，h3-js 無法正常工作，因此直接使用降級實現
@@ -213,31 +276,40 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   }, []);
 
   useEffect(() => {
-    // 獲取初始位置
+    // ⭐ Android 修復 4：權限檢查 - 在 useEffect 最開始就請求權限
     const initLocation = async () => {
+      // 請求位置權限（在獲取位置之前）
+      const hasPermission = await locationService.checkPermissions();
+      if (!hasPermission) {
+        const granted = await locationService.requestPermissions();
+        if (!granted) {
+          console.warn('[RealTimeMap] Location permission denied. Map will not show user location.');
+          // 即使權限被拒絕，也繼續執行（用戶可以稍後在設置中授予權限）
+        }
+      }
+      
+      // 獲取初始位置
       const location = await locationService.getCurrentLocation();
-      if (location) {
+      if (location && isFinite(location.latitude) && isFinite(location.longitude)) {
         console.log('[RealTimeMap] Initial location obtained:', location);
+        // Null Guard：保存有效的 location（防止 Marker 消失）
+        const newCoord = {
+          latitude: location.latitude,
+          longitude: location.longitude,
+        };
+        lastValidLocationRef.current = newCoord;
+        stableCoordinateRef.current = newCoord;
         setCurrentLocation(location);
+        setMarkerKey(prev => prev + 1); // ⭐ Android 強力修復：強制觸發 re-render
         const initialRegion: Region = {
           latitude: location.latitude,
           longitude: location.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
+          latitudeDelta: DEFAULT_ZOOM_DELTA.latitudeDelta, // ⭐ 使用標準縮放常數
+          longitudeDelta: DEFAULT_ZOOM_DELTA.longitudeDelta,
         };
         setCurrentRegion(initialRegion);
         
-        // 進入遊戲時，自動將地圖移動到用戶位置並開啟跟隨模式
-        // 只有不在查看歷史軌跡時才自動跟隨
-        if (!showHistoryTrail) {
-          setIsFollowing(true);
-          requestAnimationFrame(() => {
-            if (mapRef.current) {
-              mapRef.current.animateToRegion(initialRegion, 1000);
-              console.log('[RealTimeMap] Map animated to user location on initial load, follow mode enabled');
-            }
-          });
-        }
+        // ⭐ 注意：初次聚焦邏輯已移至專門的 useEffect，這裡不再執行
         
         // 載入軌跡：優先顯示歷史軌跡（完整軌跡線），其次顯示當前會話軌跡
         if (showHistoryTrail && selectedSessionId) {
@@ -303,16 +375,67 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         lat: location.latitude,
         lng: location.longitude,
         distance: distance,
+        accuracy: location.accuracy,
         historyCount: gpsHistoryService.getHistoryCount(),
       });
       
-      // 立即更新當前位置（不節流）
-      setCurrentLocation(location);
+      // ⭐ Android 修復 1：解鎖視圖更新 - setCurrentLocation 永遠執行（不依賴 isCollecting）
+      // 這樣可以確保使用者游標始終顯示，無論是否在採集狀態
+      if (location && isFinite(location.latitude) && isFinite(location.longitude) &&
+          Math.abs(location.latitude) <= 90 && Math.abs(location.longitude) <= 180) {
+        
+        const newCoord = {
+          latitude: location.latitude,
+          longitude: location.longitude,
+        };
+        lastValidLocationRef.current = newCoord;
+        
+        // ⭐ Android 修復：根據精度調整更新閾值
+        if (!stableCoordinateRef.current) {
+          // 第一個點，直接設置（即使精度較差也要顯示）
+          stableCoordinateRef.current = newCoord;
+          setMarkerKey(prev => prev + 1); // ⭐ Android 強力修復：強制觸發 re-render
+          console.log('[RealTimeMap] Initial coordinate set:', newCoord);
+        } else {
+          // 簡單的距離計算（米）
+          const coordDistance = Math.sqrt(
+            Math.pow((newCoord.latitude - stableCoordinateRef.current.latitude) * 111000, 2) +
+            Math.pow((newCoord.longitude - stableCoordinateRef.current.longitude) * 111000 * Math.cos(newCoord.latitude * Math.PI / 180), 2)
+          );
+          
+          // ⭐ Android 強力修復：大幅降低更新閾值，確保標記能更新
+          // 精度差時（>50m），閾值設為 5m；精度好時（<50m），閾值設為 1m
+          const threshold = (location.accuracy && location.accuracy > 50) ? 5 : 1;
+          
+          if (coordDistance > threshold) {
+            stableCoordinateRef.current = newCoord;
+            setMarkerKey(prev => prev + 1); // ⭐ Android 強力修復：強制觸發 re-render
+            console.log(`[RealTimeMap] Coordinate updated (distance: ${coordDistance.toFixed(1)}m, threshold: ${threshold}m, accuracy: ${location.accuracy?.toFixed(1)}m)`);
+          }
+        }
+        
+        // ⭐ 關鍵：setCurrentLocation 永遠執行，不依賴 isCollecting
+        setCurrentLocation(location);
+      } else {
+        console.warn('[RealTimeMap] Invalid location data received:', location);
+      }
       
+      // ⭐ Android 修復 2：區分視圖更新和數據記錄
       // 只有在採集會話進行中時才記錄GPS點並觸發拾取（查看歷史時不記錄）
+      // 但 setCurrentLocation 已經在上面執行了，所以這裡只處理記錄邏輯
       if (isCollecting && gpsHistoryService.isSessionActive() && !showHistoryTrail) {
         // 記錄到當前會話
         gpsHistoryService.addPoint(location, distance);
+        
+        // ⚠️ 注意：背景模式下的記錄現在在 locationService 中處理（不依賴 React 組件狀態）
+        // 這裡只在前景模式下額外記錄（可選，但保留也不影響，因為會檢查 appState）
+        // 為了避免重複計數，只在前景模式下記錄
+        const { bgTrackingNotification } = require('../../services/backgroundTrackingNotification');
+        const appState = require('react-native').AppState.currentState;
+        if (appState === 'active') {
+          // 前景模式下也可以記錄（用於 DevDashboard 顯示）
+          bgTrackingNotification.recordBackgroundPoint();
+        }
         
         // 記錄造訪區域（用於探索系統）
         explorationService.recordVisit(location.latitude, location.longitude);
@@ -371,8 +494,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         }
       }
       
-      // 跟隨模式邏輯：初始狀態為跟隨模式，用戶拖動地圖後切換為自由模式
-      // 只有在跟隨模式時，地圖才會自動跟隨用戶位置（followsUserLocation={isFollowing}）
+      // 跟隨模式邏輯：初始狀態為 USER 模式，用戶拖動地圖後切換為 NONE 模式
+      // 只有在跟隨模式時，地圖才會自動跟隨用戶位置（followsUserLocation={followMode !== 'NONE'}）
     });
 
     return () => {
@@ -387,9 +510,97 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // 當切換到歷史查看模式時，自動禁用跟隨模式
   useEffect(() => {
     if (showHistoryTrail) {
-      setIsFollowing(false);
+      setFollowMode('NONE');
     }
   }, [showHistoryTrail]);
+
+  // 訂閱羅盤方位更新（用於 COMPASS 模式的地圖旋轉）
+  useEffect(() => {
+    let mounted = true;
+
+    const watchHeading = async () => {
+      // 只在 COMPASS 模式下訂閱羅盤
+      if (followMode !== 'COMPASS') {
+        return;
+      }
+
+      try {
+        // 檢查位置權限（羅盤需要位置權限）
+        const hasPermission = await locationService.checkPermissions();
+        if (!hasPermission) {
+          const granted = await locationService.requestPermissions();
+          if (!granted) {
+            console.warn('[RealTimeMap] Cannot watch heading: permission denied');
+            return;
+          }
+        }
+
+        // 訂閱方位更新（帶防抖動機制）
+        headingSubscriptionRef.current = await Location.watchHeadingAsync((headingData) => {
+          if (!mounted || followMode !== 'COMPASS') return;
+
+          // 獲取磁力方位（0-360度）
+          const magneticHeading = headingData.magHeading ?? 0;
+          const targetHeading = ((magneticHeading % 360) + 360) % 360;
+          
+          // 防抖動：只有當變化 > 5 度時才更新地圖
+          const headingDiff = Math.abs(targetHeading - lastMapHeadingRef.current);
+          // 處理角度跨越（例如從 359° 到 1°）
+          const normalizedDiff = headingDiff > 180 ? 360 - headingDiff : headingDiff;
+          
+          if (normalizedDiff > 5) {
+            lastMapHeadingRef.current = targetHeading;
+            setHeading(targetHeading);
+            
+            // 使用 animateCamera 旋轉地圖（不旋轉標記）
+            if (mapRef.current && currentLocation) {
+              mapRef.current.animateCamera({
+                center: {
+                  latitude: currentLocation.latitude,
+                  longitude: currentLocation.longitude,
+                },
+                heading: targetHeading,
+                pitch: 0, // 保持 2D 俯視
+              }, { duration: 200 }); // 短動畫時間確保平滑
+            }
+          }
+        });
+      } catch (error) {
+        console.error('[RealTimeMap] Failed to watch heading:', error);
+      }
+    };
+
+    // 只在主遊戲模式且 COMPASS 模式下訂閱羅盤
+    if (actualMapMode === 'GAME' && followMode === 'COMPASS') {
+      watchHeading();
+    }
+
+    return () => {
+      mounted = false;
+      if (headingSubscriptionRef.current) {
+        headingSubscriptionRef.current.remove();
+        headingSubscriptionRef.current = null;
+      }
+    };
+  }, [followMode, actualMapMode, currentLocation]);
+
+  // 當 followMode 改變時，更新地圖相機
+  useEffect(() => {
+    if (!mapRef.current || !currentLocation || actualMapMode !== 'GAME') return;
+
+    if (followMode === 'USER') {
+      // USER 模式：跟隨用戶位置，鎖定北方朝上
+      mapRef.current.animateCamera({
+        center: {
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
+        },
+        heading: 0, // 北方朝上
+        pitch: 0,
+      }, { duration: 500 });
+      lastMapHeadingRef.current = 0;
+    }
+  }, [followMode, currentLocation, actualMapMode]);
 
   // 計算初始區域（優先使用 currentRegion，其次使用 currentLocation）
   const getInitialRegion = (): Region => {
@@ -403,8 +614,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       return {
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
+        latitudeDelta: DEFAULT_ZOOM_DELTA.latitudeDelta, // ⭐ 使用標準縮放常數
+        longitudeDelta: DEFAULT_ZOOM_DELTA.longitudeDelta,
       };
     }
     
@@ -413,8 +624,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
     return {
       latitude: 25.0330,
       longitude: 121.5654,
-      latitudeDelta: 0.05,
-      longitudeDelta: 0.05,
+      latitudeDelta: DEFAULT_ZOOM_DELTA.latitudeDelta, // ⭐ 使用標準縮放常數
+      longitudeDelta: DEFAULT_ZOOM_DELTA.longitudeDelta,
     };
   };
 
@@ -440,9 +651,10 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         ref={mapRef}
         style={[mapStyle, { backgroundColor: '#1A1A1A' }]}
         initialRegion={getInitialRegion()}
-        showsUserLocation={actualMapMode === 'GAME'} // 只在主遊戲模式顯示藍點
+        onMapReady={handleMapReady} // ⭐ Android 修復：地圖準備完成的 callback
+        showsUserLocation={!currentLocation && !stableCoordinateRef.current && !lastValidLocationRef.current} // ⭐ Android 強力修復：如果完全沒有座標，顯示系統藍點
         showsMyLocationButton={false}
-        followsUserLocation={isFollowing && actualMapMode === 'GAME'} // 根據 isFollowing 狀態決定是否跟隨，只在主遊戲模式跟隨
+        followsUserLocation={followMode !== 'NONE' && actualMapMode === 'GAME'}
         showsCompass={true}
         showsScale={true}
         mapType="standard"
@@ -579,34 +791,74 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           setCurrentRegion(region);
         }}
         onPanDrag={() => {
-          // 關鍵：一旦用戶開始拖動地圖，立即切換到自由模式
-          if (isFollowing) {
-            setIsFollowing(false);
-            console.log('[RealTimeMap] User dragged map, switched to free roam mode');
+          // 關鍵：一旦用戶開始拖動地圖，立即切換到 NONE 模式（手動模式）
+          if (followMode !== 'NONE') {
+            setFollowMode('NONE');
+            console.log('[RealTimeMap] User dragged map, switched to NONE mode');
           }
         }}
       >
-        {/* 主遊戲模式：顯示過去7天內走過的H3六邊形 */}
-        {actualMapMode === 'GAME' && Array.from(exploredHexes).map((h3Index) => {
-          const boundary = getH3CellBoundary(h3Index);
-          if (boundary.length === 0) return null;
+        {/* 主遊戲模式：顯示過去7天內走過的H3六邊形（僅渲染視野內的格子以優化性能） */}
+        {actualMapMode === 'GAME' && (() => {
+          // 視口過濾（Viewport Culling）：只渲染當前屏幕範圍內的格子
+          const visibleHexes = Array.from(exploredHexes).filter((h3Index) => {
+            if (!currentRegion) return true; // 如果沒有區域信息，顯示所有
+            
+            // 獲取 H3 格子的邊界
+            const boundary = getH3CellBoundary(h3Index);
+            if (boundary.length === 0) return false;
+            
+            // 計算格子的邊界框（bounding box）
+            const lats = boundary.map(([lat]) => lat);
+            const lngs = boundary.map(([, lng]) => lng);
+            const minLat = Math.min(...lats);
+            const maxLat = Math.max(...lats);
+            const minLng = Math.min(...lngs);
+            const maxLng = Math.max(...lngs);
+            
+            // 檢查格子是否與當前視野區域重疊
+            const viewMinLat = currentRegion.latitude - currentRegion.latitudeDelta / 2;
+            const viewMaxLat = currentRegion.latitude + currentRegion.latitudeDelta / 2;
+            const viewMinLng = currentRegion.longitude - currentRegion.longitudeDelta / 2;
+            const viewMaxLng = currentRegion.longitude + currentRegion.longitudeDelta / 2;
+            
+            // 檢查是否有重疊
+            return !(maxLat < viewMinLat || minLat > viewMaxLat || maxLng < viewMinLng || minLng > viewMaxLng);
+          });
           
-          // 轉換邊界座標為 MapView Polygon 需要的格式
-          const coordinates = boundary.map(([lat, lng]) => ({
-            latitude: lat,
-            longitude: lng,
-          }));
+          // 限制渲染數量以優化性能（如果格子數量超過 500，只渲染視野內的）
+          const hexesToRender = visibleHexes.length > 500 ? visibleHexes.slice(0, 500) : visibleHexes;
           
-          return (
-            <Polygon
-              key={`explored_hex_${h3Index}`}
-              coordinates={coordinates}
-              fillColor="rgba(34, 197, 94, 0.4)" // 探索綠，半透明
-              strokeColor="rgba(34, 197, 94, 0.8)" // 探索綠，較深的邊框
-              strokeWidth={1}
-            />
-          );
-        })}
+          return hexesToRender.map((h3Index) => {
+            const boundary = getH3CellBoundary(h3Index);
+            if (boundary.length === 0) return null;
+            
+            // 計算邊界的中心點
+            const centerLat = boundary.reduce((sum, [lat]) => sum + lat, 0) / boundary.length;
+            const centerLng = boundary.reduce((sum, [, lng]) => sum + lng, 0) / boundary.length;
+            
+            // 將邊界座標縮放 90%（向中心縮小，創造縫隙）
+            const scale = 0.9;
+            const scaledCoordinates = boundary.map(([lat, lng]) => {
+              const scaledLat = centerLat + (lat - centerLat) * scale;
+              const scaledLng = centerLng + (lng - centerLng) * scale;
+              return {
+                latitude: scaledLat,
+                longitude: scaledLng,
+              };
+            });
+            
+            return (
+              <Polygon
+                key={`explored_hex_${h3Index}`}
+                coordinates={scaledCoordinates}
+                fillColor="rgba(34, 197, 94, 0.25)" // 極淡的綠色，確保道路可見
+                strokeColor="transparent" // 完全透明邊框，消除網格感
+                zIndex={1} // 確保在道路文字下方
+              />
+            );
+          });
+        })()}
 
         {/* 歷史軌跡模式：顯示軌跡線 */}
         {actualMapMode === 'HISTORY' && showTrail && trailCoordinates.length > 1 && (
@@ -659,20 +911,33 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         )}
 
         {/* 當前位置標記（只在主遊戲模式顯示） */}
-        {actualMapMode === 'GAME' && currentLocation && (
-          <Marker
-            coordinate={{
-              latitude: currentLocation.latitude,
-              longitude: currentLocation.longitude,
-            }}
-            title="我的位置"
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.customMarker}>
-              <View style={styles.markerDot} />
-            </View>
-          </Marker>
-        )}
+        {/* ⭐ Android 強力修復：使用 currentLocation (state) 而不是 ref，確保 re-render */}
+        {(() => {
+          const markerCoord = currentLocation ? {
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+          } : (stableCoordinateRef.current || lastValidLocationRef.current);
+          
+          console.log('[RealTimeMap] Rendering UserMarker check:', {
+            actualMapMode,
+            hasCurrentLocation: !!currentLocation,
+            hasStableCoord: !!stableCoordinateRef.current,
+            hasLastValidCoord: !!lastValidLocationRef.current,
+            markerCoord,
+            markerKey,
+          });
+          
+          if (actualMapMode === 'GAME' && markerCoord) {
+            return (
+              <UserMarker
+                key={`marker-${markerCoord.latitude.toFixed(6)}-${markerCoord.longitude.toFixed(6)}-${markerKey}`} // ⭐ Android 強力修復：添加 markerKey 強迫重繪
+                coordinate={markerCoord}
+              />
+            );
+          }
+          
+          return null;
+        })()}
       </MapView>
 
       {/* 實時信息覆蓋層（只在主遊戲模式顯示） */}
@@ -687,26 +952,51 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         </View>
       )}
 
-      {/* 歸位按鈕（只在主遊戲模式顯示） */}
-      {actualMapMode === 'GAME' && !isFollowing && currentLocation && (
+      {/* 定位/羅盤按鈕（三態循環切換，只在主遊戲模式顯示） */}
+      {actualMapMode === 'GAME' && currentLocation && (
         <View style={styles.recenterButtonContainer}>
           <TouchableOpacity
             style={styles.recenterButton}
             onPress={() => {
-              setIsFollowing(true);
-              if (mapRef.current && currentLocation) {
-                const region: Region = {
-                  latitude: currentLocation.latitude,
-                  longitude: currentLocation.longitude,
-                  latitudeDelta: currentRegion?.latitudeDelta || 0.01,
-                  longitudeDelta: currentRegion?.longitudeDelta || 0.01,
-                };
-                mapRef.current.animateToRegion(region, 500);
-                console.log('[RealTimeMap] Recenter button pressed, returning to follow mode');
+              // 三態循環切換：NONE -> USER -> COMPASS -> USER
+              if (followMode === 'NONE') {
+                // 切換到 USER 模式（跟隨用戶，北方朝上）
+                setFollowMode('USER');
+                if (mapRef.current && currentLocation) {
+                  mapRef.current.animateCamera({
+                    center: {
+                      latitude: currentLocation.latitude,
+                      longitude: currentLocation.longitude,
+                    },
+                    heading: 0,
+                    pitch: 0,
+                  }, { duration: 500 });
+                }
+                console.log('[RealTimeMap] Switched to USER mode (North Up)');
+              } else if (followMode === 'USER') {
+                // 切換到 COMPASS 模式（跟隨用戶，地圖隨手機旋轉）
+                setFollowMode('COMPASS');
+                console.log('[RealTimeMap] Switched to COMPASS mode');
+              } else {
+                // 從 COMPASS 切換回 USER 模式（關閉旋轉，回到北方朝上）
+                setFollowMode('USER');
+                if (mapRef.current && currentLocation) {
+                  mapRef.current.animateCamera({
+                    center: {
+                      latitude: currentLocation.latitude,
+                      longitude: currentLocation.longitude,
+                    },
+                    heading: 0,
+                    pitch: 0,
+                  }, { duration: 500 });
+                }
+                console.log('[RealTimeMap] Switched to USER mode (from COMPASS)');
               }
             }}
           >
-            <Text style={styles.recenterButtonText}>📍</Text>
+            <Text style={styles.recenterButtonText}>
+              {followMode === 'NONE' ? '📍' : followMode === 'USER' ? '📍' : '🧭'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -779,6 +1069,29 @@ const styles = StyleSheet.create({
   recenterButtonText: {
     fontSize: 24,
   },
+  markerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headingIndicator: {
+    position: 'absolute',
+    width: 60,
+    height: 60,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    zIndex: 0,
+  },
+  headingCone: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 15,
+    borderRightWidth: 15,
+    borderTopWidth: 25,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(76, 175, 80, 0.4)', // 半透明綠色扇形
+    marginTop: 12, // 從標記點開始延伸
+  },
   customMarker: {
     width: 24,
     height: 24,
@@ -793,6 +1106,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 4,
+    zIndex: 1, // 確保標記在視野指示器上方
   },
   markerDot: {
     width: 8,
