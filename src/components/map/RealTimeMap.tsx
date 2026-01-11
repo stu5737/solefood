@@ -106,10 +106,17 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // 當 selectedSessionId、showHistoryTrail 或 isCollecting 變化時，更新軌跡顯示
   useEffect(() => {
     if (showHistoryTrail && selectedSessionId) {
-      // 如果正在查看歷史軌跡，只載入起點和終點
+      // 如果正在查看歷史軌跡，載入完整的軌跡線
       const historyTrail = gpsHistoryService.getSessionTrail(selectedSessionId);
       if (historyTrail.length > 0) {
-        // 只保留起點和終點
+        // 載入完整軌跡線
+        const fullTrail = historyTrail.map(point => ({
+          latitude: point.latitude,
+          longitude: point.longitude,
+        }));
+        setTrailCoordinates(fullTrail);
+        
+        // 設置起點和終點
         const startPoint = {
           latitude: historyTrail[0].latitude,
           longitude: historyTrail[0].longitude,
@@ -120,21 +127,21 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         };
         setHistoryStartPoint(startPoint);
         setHistoryEndPoint(endPoint);
-        // 歷史軌跡不顯示完整軌跡線，清空 trailCoordinates
-        setTrailCoordinates([]);
         
-        // 自動將地圖中心設為起點
-        if (mapRef.current) {
-          const region: Region = {
-            latitude: startPoint.latitude,
-            longitude: startPoint.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          };
+        // 自動縮放地圖以涵蓋整個軌跡
+        if (mapRef.current && fullTrail.length > 0) {
           requestAnimationFrame(() => {
             if (mapRef.current) {
-              mapRef.current.animateToRegion(region, 1000);
-              console.log('[RealTimeMap] Historical trail: Map centered on start point');
+              mapRef.current.fitToCoordinates(fullTrail, {
+                edgePadding: {
+                  top: 50,
+                  right: 50,
+                  bottom: 50,
+                  left: 50,
+                },
+                animated: true,
+              });
+              console.log('[RealTimeMap] Historical trail: Map fitted to coordinates');
             }
           });
         }
@@ -215,11 +222,18 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           });
         }
         
-        // 載入軌跡：優先顯示歷史軌跡（只顯示起終點），其次顯示當前會話軌跡
+        // 載入軌跡：優先顯示歷史軌跡（完整軌跡線），其次顯示當前會話軌跡
         if (showHistoryTrail && selectedSessionId) {
           const historyTrail = gpsHistoryService.getSessionTrail(selectedSessionId);
           if (historyTrail.length > 0) {
-            // 歷史軌跡只顯示起終點
+            // 載入完整軌跡線
+            const fullTrail = historyTrail.map(point => ({
+              latitude: point.latitude,
+              longitude: point.longitude,
+            }));
+            setTrailCoordinates(fullTrail);
+            
+            // 設置起點和終點
             const startPoint = {
               latitude: historyTrail[0].latitude,
               longitude: historyTrail[0].longitude,
@@ -230,20 +244,20 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             };
             setHistoryStartPoint(startPoint);
             setHistoryEndPoint(endPoint);
-            setTrailCoordinates([]); // 歷史軌跡不顯示完整軌跡線
             
-            // 自動將地圖中心設為起點
-            const region: Region = {
-              latitude: startPoint.latitude,
-              longitude: startPoint.longitude,
-              latitudeDelta: 0.01,
-              longitudeDelta: 0.01,
-            };
-            setCurrentRegion(region);
+            // 自動縮放地圖以涵蓋整個軌跡
             requestAnimationFrame(() => {
-              if (mapRef.current) {
-                mapRef.current.animateToRegion(region, 1000);
-                console.log('[RealTimeMap] Historical trail: Map centered on start point on initial load');
+              if (mapRef.current && fullTrail.length > 0) {
+                mapRef.current.fitToCoordinates(fullTrail, {
+                  edgePadding: {
+                    top: 50,
+                    right: 50,
+                    bottom: 50,
+                    left: 50,
+                  },
+                  animated: true,
+                });
+                console.log('[RealTimeMap] Historical trail: Map fitted to coordinates on initial load');
               }
             });
           }
@@ -407,7 +421,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         ref={mapRef}
         style={[mapStyle, { backgroundColor: '#1A1A1A' }]}
         initialRegion={getInitialRegion()}
-        showsUserLocation={true}
+        showsUserLocation={!showHistoryTrail} // 查看歷史時隱藏藍點
         showsMyLocationButton={false}
         followsUserLocation={isFollowing && !showHistoryTrail} // 根據 isFollowing 狀態決定是否跟隨，查看歷史時不跟隨
         showsCompass={true}
@@ -553,71 +567,17 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }}
       >
-        {/* 7天歷史：訪問頻繁的區域（綠色正方形，提示已探索，更精緻的設計） */}
-        {frequentRegions
-          .filter(({ visitCount }) => visitCount >= 3) // 只顯示訪問3次以上的區域，避免過於密集
-          .map(({ h3Index, visitCount }) => {
-            const boundary = getH3Boundary(h3Index);
-            if (boundary.length === 0) return null;
+        {/* H3 六邊形網格已移除，專注於軌跡顯示 */}
 
-            const coordinates = boundary.map(([lat, lng]) => ({
-              latitude: lat,
-              longitude: lng,
-            }));
-
-            // 更精緻的透明度計算：使用更淡的顏色，避免過綠遮擋道路
-            // 訪問3次: 0.06, 10次: 0.12, 50次以上: 0.16（上限，更淡）
-            // 這樣即使訪問很多次，也不會過綠，保持地圖清晰，道路可見
-            const baseOpacity = 0.06;
-            const maxOpacity = 0.16; // 降低上限，避免過綠
-            const opacity = Math.min(maxOpacity, baseOpacity + (Math.log(visitCount + 1) / Math.log(50)) * 0.10);
-
-            return (
-              <Polygon
-                key={`frequent_${h3Index}`}
-                coordinates={coordinates}
-                fillColor={`rgba(76, 175, 80, ${opacity})`} // 更淡的綠色，避免遮擋道路
-                strokeColor="rgba(76, 175, 80, 0.25)" // 更淡的邊框，幾乎不可見
-                strokeWidth={0.3} // 極細的邊框，更精緻
-              />
-            );
-          })}
-
-        {/* 已探索區域（開拓者模式判斷用，較淡） */}
-        {exploredRegions.map((region) => {
-          const boundary = getH3Boundary(region.h3Index);
-          if (boundary.length === 0) return null;
-
-          // 如果這個區域已經在 frequentRegions 中顯示了，就跳過（避免重複）
-          if (frequentRegions.some(fr => fr.h3Index === region.h3Index)) {
-            return null;
-          }
-
-          const coordinates = boundary.map(([lat, lng]) => ({
-            latitude: lat,
-            longitude: lng,
-          }));
-
-          return (
-            <Polygon
-              key={`explored_${region.h3Index}`}
-              coordinates={coordinates}
-              fillColor="rgba(0, 255, 0, 0.1)" // 較淡的綠色
-              strokeColor="rgba(0, 255, 0, 0.3)"
-              strokeWidth={1}
-            />
-          );
-        })}
-
-        {/* GPS 軌跡線（只顯示當前會話，歷史軌跡不顯示完整軌跡） */}
-        {showTrail && !showHistoryTrail && trailCoordinates.length > 1 && (
+        {/* GPS 軌跡線（當前會話和歷史軌跡都顯示完整軌跡） */}
+        {showTrail && trailCoordinates.length > 1 && (
           <Polyline
             coordinates={trailCoordinates}
-            strokeColor="#4CAF50" // 當前會話用綠色
-            strokeWidth={4}
+            strokeColor={showHistoryTrail ? "#00FF00" : "#4CAF50"} // 歷史軌跡用亮綠色，當前會話用綠色
+            strokeWidth={showHistoryTrail ? 5 : 4} // 歷史軌跡稍微粗一點
             lineCap="round"
             lineJoin="round"
-            opacity={1.0}
+            opacity={showHistoryTrail ? 0.9 : 1.0} // 歷史軌跡稍微透明
           />
         )}
 
