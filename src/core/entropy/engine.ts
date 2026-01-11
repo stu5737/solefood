@@ -582,12 +582,17 @@ class EntropyEngine {
     }
 
     // 檢查速度
-    if (input.speed < 0) {
-      throw new Error('Speed cannot be negative');
-    }
-    if (input.speed > ANTI_CHEAT.MAX_HUMAN_SPEED) {
-      console.warn('[EntropyEngine] Suspicious speed detected:', input.speed);
-      // 可以選擇拋出錯誤或標記異常
+    // 速度可以是 undefined（如果 GPS 未提供或無效）
+    // 但如果提供了速度值，必須是非負數
+    if (input.speed !== undefined && input.speed !== null) {
+      if (input.speed < 0) {
+        // 如果速度是負數，將其設為 undefined（視為無效值）而不是拋出錯誤
+        console.warn('[EntropyEngine] Invalid negative speed detected, ignoring:', input.speed);
+        input.speed = undefined;
+      } else if (input.speed > ANTI_CHEAT.MAX_HUMAN_SPEED) {
+        console.warn('[EntropyEngine] Suspicious speed detected:', input.speed);
+        // 可以選擇拋出錯誤或標記異常
+      }
     }
 
     // 檢查時間戳

@@ -60,6 +60,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   const mapMode = useSessionStore((state) => state.mapMode);
   const exploredHexes = useSessionStore((state) => state.exploredHexes);
   const updateExploredHexesFromHistory = useSessionStore((state) => state.updateExploredHexesFromHistory);
+  const totalDistance = useSessionStore((state) => state.totalDistance);
   
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
   const [trailCoordinates, setTrailCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
@@ -319,7 +320,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         // 觸發熵引擎處理拾取（GPS 更新時處理移動和拾取）
         // distance 是米，需要轉換為公里
         if (distance > 0) {
-          const speed = location.speed ? location.speed * 3.6 : undefined; // m/s 轉換為 km/h
+          // 處理速度：GPS 可能返回負數（無效值），需要過濾
+          // m/s 轉換為 km/h，如果速度為負數或無效，設為 undefined
+          const speed = (location.speed && location.speed > 0) ? location.speed * 3.6 : undefined;
           
           try {
             const input: MovementInput = {
@@ -676,7 +679,10 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       {actualMapMode === 'GAME' && currentLocation && (
         <View style={styles.infoOverlay}>
           <Text style={styles.infoText}>
-            速度: {currentLocation.speed ? (currentLocation.speed * 3.6).toFixed(1) : '0.0'} km/h
+            {currentLocation.speed ? (currentLocation.speed * 3.6).toFixed(1) : '0.0'} km/h
+          </Text>
+          <Text style={styles.infoSubText}>
+            Total: {totalDistance.toFixed(2)} km
           </Text>
         </View>
       )}
@@ -724,22 +730,29 @@ const styles = StyleSheet.create({
   },
   infoOverlay: {
     position: 'absolute',
-    top: 100,  // 從 16 改為 100，避免被狀態欄和頂部 UI 擋住
-    left: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    padding: 12,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 5,
+    top: 60,  // 調整位置，避免被縮小的模式切換按鈕擋住
+    left: 0,
+    right: 0,
+    alignItems: 'center',  // 居中對齊
+    backgroundColor: 'transparent',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   infoText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
     color: '#4CAF50',  // 亮綠色，符合深色主題
     fontFamily: 'monospace',
+    textAlign: 'center',
+  },
+  infoSubText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#E0E0E0',  // 淺灰色，較小字體
+    fontFamily: 'monospace',
+    textAlign: 'center',
+    marginTop: 2,
+    opacity: 0.8,
   },
   // 歸位按鈕樣式
   recenterButtonContainer: {

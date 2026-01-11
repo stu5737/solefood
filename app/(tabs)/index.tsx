@@ -101,25 +101,27 @@ export default function GameScreen() {
       {isReady && (
         <SafeAreaView style={styles.modeSwitchContainer} pointerEvents="box-none">
           <View style={styles.modeSwitch}>
-            <Text style={styles.modeLabel}>🌍 戶外模式</Text>
-            <Switch
-              value={isSimulatorMode}
-              onValueChange={(value) => {
-                setIsSimulatorMode(value);
-                // 切換模式時，如果正在採集，保持採集狀態
-              }}
-              trackColor={{ false: '#4CAF50', true: '#9C27B0' }}
-              thumbColor="#FFFFFF"
-              ios_backgroundColor="#3e3e3e"
-            />
-            <Text style={styles.modeLabel}>🎮 模擬器</Text>
-            {/* 開發者控制台開關 */}
+            <Text style={styles.modeLabel}>🌍</Text>
+            <View style={styles.modeSwitchWrapper}>
+              <Switch
+                value={isSimulatorMode}
+                onValueChange={(value) => {
+                  setIsSimulatorMode(value);
+                  // 切換模式時，如果正在採集，保持採集狀態
+                }}
+                trackColor={{ false: '#4CAF50', true: '#9C27B0' }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor="#3e3e3e"
+              />
+            </View>
+            <Text style={styles.modeLabel}>🎮</Text>
+            {/* 開發者控制台開關（縮小版） */}
             <TouchableOpacity
-              style={styles.devToggleButton}
+              style={styles.devToggleButtonMini}
               onPress={() => setShowDevDashboard(!showDevDashboard)}
             >
-              <Text style={styles.devToggleText}>
-                {showDevDashboard ? '🔧 隱藏' : '🔧 顯示'}
+              <Text style={styles.devToggleTextMini}>
+                {showDevDashboard ? '🔧' : '⚙️'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -205,16 +207,6 @@ export default function GameScreen() {
                     <Text style={styles.buttonText}>📜 歷史軌跡</Text>
                   </TouchableOpacity>
                 )}
-                {/* 模擬器快捷按鈕（戶外模式也可以快速打開模擬器測試） */}
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.simulatorQuickButton]}
-                  onPress={() => {
-                    setIsSimulatorMode(true);
-                    console.log('[GameScreen] Quick switch to simulator mode');
-                  }}
-                >
-                  <Text style={styles.buttonText}>🎮 快速測試</Text>
-                </TouchableOpacity>
               </View>
             ) : (
               // 採集中：顯示結束選項
@@ -396,30 +388,47 @@ const styles = StyleSheet.create({
   },
   modeSwitchContainer: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    top: 8,  // 稍微下移，避免完全貼邊
+    left: 8,
+    right: 8,
     zIndex: 2000, // 提高 zIndex，確保在 DevDashboard 上方
     pointerEvents: 'box-none',
   },
   modeSwitch: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)', // 提高背景不透明度，確保按鈕可見
-    margin: 16,
-    borderRadius: 12,
+    justifyContent: 'flex-start',  // 改為左對齊，放在左側
+    paddingVertical: 4,  // 減少 padding
+    paddingHorizontal: 8,  // 減少 padding
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',  // 稍微透明
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)', // 提高邊框可見度
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   modeLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 10,  // 縮小字體
+    fontWeight: '500',
     color: '#FFFFFF',
-    marginHorizontal: 12,
+    marginHorizontal: 4,  // 減少間距
+  },
+  // 縮小的 Switch 樣式
+  modeSwitchWrapper: {
+    transform: [{ scale: 0.75 }],  // 縮小到 75%
+  },
+  // 開發者控制台開關（縮小版）
+  devToggleButtonMini: {
+    marginLeft: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  devToggleTextMini: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
   },
   mapWrapper: {
     position: 'absolute',
@@ -467,9 +476,6 @@ const styles = StyleSheet.create({
   },
   historyButton: {
     backgroundColor: '#9C27B0', // 紫色：歷史軌跡
-  },
-  simulatorQuickButton: {
-    backgroundColor: '#FF9800', // 橙色：快速測試按鈕
   },
   endButtonContainer: {
     flexDirection: 'row',

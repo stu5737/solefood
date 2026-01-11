@@ -288,13 +288,13 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 100, // 調整位置，確保不擋住頂部按鈕（modeSwitch 約 80px 高 + margin）
-    left: 16,
-    right: 16,
-    maxHeight: '65%', // 稍微減少高度，避免佔用過多空間
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    borderRadius: 12,
-    padding: 16,
+    top: 120, // 調整位置，避免擋住 HUD（速度顯示在 top: 60）
+    left: 8,  // 移到左側邊緣
+    width: 160,  // 固定寬度，變成垂直細長條
+    maxHeight: '70%',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',  // 更透明
+    borderRadius: 8,
+    padding: 8,  // 減少 padding
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
     zIndex: 1000, // 低於頂部按鈕的 zIndex (2000)
@@ -342,29 +342,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,  // 減少間距
   },
   label: {
-    fontSize: 14,
+    fontSize: 10,  // 縮小字體
     color: '#B0B0B0',
     flex: 1,
   },
   value: {
-    fontSize: 14,
+    fontSize: 10,  // 縮小字體
     fontWeight: '600',
     color: '#FFFFFF',
     textAlign: 'right',
   },
   warningBox: {
-    marginTop: 12,
-    padding: 12,
+    marginTop: 8,  // 減少間距
+    padding: 8,  // 減少 padding
     backgroundColor: 'rgba(255, 82, 82, 0.2)',
-    borderRadius: 8,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#FF5252',
   },
   warningText: {
-    fontSize: 14,
+    fontSize: 10,  // 縮小字體
     fontWeight: '700',
     color: '#FF5252',
     textAlign: 'center',
@@ -376,28 +376,28 @@ const styles = StyleSheet.create({
   },
   controlButton: {
     backgroundColor: '#2196F3',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 24,  // 縮小按鈕
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   controlButtonSmall: {
-    width: 32,
-    height: 32,
+    width: 24,  // 縮小按鈕
+    height: 24,
   },
   controlButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 14,  // 縮小字體
     fontWeight: '700',
   },
   actionButton: {
     backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 6,  // 減少 padding
+    paddingHorizontal: 10,  // 減少 padding
+    borderRadius: 6,
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,  // 減少間距
   },
   expandButton: {
     backgroundColor: '#FF9800',
@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 10,  // 縮小字體
     fontWeight: '600',
   },
   consumableRow: {
@@ -431,10 +431,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   consumableButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    minWidth: 70,
+    paddingVertical: 4,  // 減少 padding
+    paddingHorizontal: 8,  // 減少 padding
+    borderRadius: 4,
+    minWidth: 55,  // 縮小最小寬度
     alignItems: 'center',
   },
   eatButton: {
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
   },
   consumableButtonText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 9,  // 縮小字體
     fontWeight: '600',
   },
 });
