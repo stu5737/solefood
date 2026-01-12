@@ -15,7 +15,8 @@
           "locationAlwaysPermission": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
           "locationWhenInUsePermission": "此應用需要位置權限，以記錄您的 GPS 軌跡。",
           "isIosBackgroundLocationEnabled": true,
-          "isAndroidBackgroundLocationEnabled": true
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],

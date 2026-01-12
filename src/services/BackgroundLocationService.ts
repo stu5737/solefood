@@ -111,12 +111,15 @@ class BackgroundLocationService {
         accuracy: Location.Accuracy.BestForNavigation, // ⭐ STEPN 修復：使用最高精度
         timeInterval: 1000, // ⭐ STEPN 修復：1 秒更新一次
         distanceInterval: 5, // ⭐ STEPN 修復：每 5 公尺才觸發一次更新，由系統底層先幫忙濾掉微小雜訊
+        // ⭐ iOS 關鍵：允許背景更新（會出現藍色狀態條）
+        showsBackgroundLocationIndicator: true,
+        allowsBackgroundLocationUpdates: true,
+        // ⭐ Android 關鍵：前台服務通知（防止被系統殺掉）
         foregroundService: {
-          notificationTitle: '正在採集',
-          notificationBody: '正在記錄您的位置軌跡',
+          notificationTitle: 'Solefood 運行中',
+          notificationBody: '正在背景記錄您的探索軌跡...',
+          notificationColor: '#22C55E', // 綠色
         },
-        showsBackgroundLocationIndicator: true, // iOS 必須
-        // Android 必須設置 foregroundService，否則無法在後台運行
       });
 
       this.isTracking = true;

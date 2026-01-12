@@ -143,16 +143,22 @@ class LocationService {
         speed: location.coords.speed || undefined,
       };
     } catch (error: any) {
-      // 詳細的錯誤處理
+      // 詳細的錯誤處理（使用 warn 而非 error，因為這不是致命錯誤）
+      // getCurrentLocation 失敗不會阻止應用運行，watchPositionAsync 會繼續嘗試獲取位置
       if (error.code === 'ERR_LOCATION_PERMISSION_DENIED') {
-        console.error('[LocationService] Location permission denied. Please grant location permission in Settings.');
+        console.warn('[LocationService] Location permission denied. Please grant location permission in Settings.');
       } else if (error.code === 'ERR_LOCATION_UNAVAILABLE') {
-        console.error('[LocationService] Location unavailable. Please check your location settings and ensure GPS is enabled.');
+        console.warn('[LocationService] Location unavailable. Please check your location settings and ensure GPS is enabled.');
+        console.warn('[LocationService] App will continue to try getting location via watchPositionAsync.');
       } else if (error.message?.includes('kCLErrorDomain error 0')) {
-        console.error('[LocationService] iOS Location Error: Location service may be disabled or unavailable. Please check Settings > Privacy > Location Services.');
+        console.warn('[LocationService] iOS Location Error: Location service may be disabled or unavailable.');
+        console.warn('[LocationService] Please check Settings > Privacy > Location Services.');
+        console.warn('[LocationService] App will continue to try getting location via watchPositionAsync.');
       } else {
-        console.error('[LocationService] Failed to get current location:', error);
+        // 其他未知錯誤，記錄詳細信息但使用 warn 級別
+        console.warn('[LocationService] Failed to get current location (non-fatal):', error.message || error);
       }
+      // 返回 null，讓調用者知道獲取位置失敗，但不阻止應用繼續運行
       return null;
     }
   }
