@@ -469,6 +469,174 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
             <Text style={styles.formulaLabel}>Last Error:</Text>
             <Text style={styles.formulaValue}>None</Text>
           </View>
+          
+          {/* ⭐ 新增：重啟 GPS 按鈕（用於修復 iOS 模擬器 GPS 訊號中斷） */}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#2196F3', marginTop: 12 }]}
+            onPress={async () => {
+              console.log('🔄 [DevDashboard] Restart GPS button pressed');
+              try {
+                const success = await locationService.restartTracking();
+                if (success) {
+                  Alert.alert('✅ GPS 重啟成功', '定位服務已重新啟動，請檢查終端日誌確認訊號恢復');
+                } else {
+                  Alert.alert('❌ GPS 重啟失敗', '請檢查權限設置或嘗試手動重置模擬器位置服務');
+                }
+              } catch (error) {
+                console.error('[DevDashboard] Error restarting GPS:', error);
+                Alert.alert('❌ 錯誤', `重啟 GPS 時發生錯誤: ${error}`);
+              }
+            }}
+          >
+            <Text style={styles.actionButtonText}>♻️ 重啟定位服務 (Restart GPS)</Text>
+          </TouchableOpacity>
+          
+          {/* ⭐ 新增：載入測試歷史按鈕（用於測試 H3 渲染） */}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#9C27B0', marginTop: 12 }]}
+            onPress={async () => {
+              try {
+                const { useSessionStore } = require('../../stores/sessionStore');
+                const { latLngToH3, H3_RESOLUTION } = require('../../core/math/h3');
+                const { saveData, STORAGE_KEYS } = require('../../utils/storage');
+                const store = useSessionStore.getState();
+                
+                // 生成一些測試 H3（在當前位置周圍）
+                const testHexes = new Set<string>();
+                if (gpsData.currentLocation) {
+                  const centerLat = gpsData.currentLocation.latitude;
+                  const centerLng = gpsData.currentLocation.longitude;
+                  
+                  // 生成 5x5 的測試網格
+                  for (let i = -2; i <= 2; i++) {
+                    for (let j = -2; j <= 2; j++) {
+                      const lat = centerLat + (i * 0.001); // 約 111 米
+                      const lng = centerLng + (j * 0.001);
+                      const h3Index = latLngToH3(lat, lng, H3_RESOLUTION);
+                      if (h3Index) {
+                        testHexes.add(h3Index);
+                      }
+                    }
+                  }
+                } else {
+                  // 如果沒有當前位置，使用固定座標（Apple 總部）
+                  const centerLat = 37.330697;
+                  const centerLng = -122.029478;
+                  for (let i = -2; i <= 2; i++) {
+                    for (let j = -2; j <= 2; j++) {
+                      const lat = centerLat + (i * 0.001);
+                      const lng = centerLng + (j * 0.001);
+                      const h3Index = latLngToH3(lat, lng, H3_RESOLUTION);
+                      if (h3Index) {
+                        testHexes.add(h3Index);
+                      }
+                    }
+                  }
+                }
+                
+                // 合併到 exploredHexes
+                const mergedHexes = new Set([...store.exploredHexes, ...testHexes]);
+                store.set({ exploredHexes: mergedHexes });
+                
+                // 保存到持久化存儲
+                const hexesArray = Array.from(mergedHexes);
+                await saveData(STORAGE_KEYS.EXPLORED_HEXES, hexesArray);
+                
+                Alert.alert('✅ 測試數據已載入', `已添加 ${testHexes.size} 個測試 H3 六邊形\n總共 ${mergedHexes.size} 個六邊形`);
+              } catch (error) {
+                console.error('[DevDashboard] Error loading fake history:', error);
+                Alert.alert('❌ 錯誤', `載入測試數據失敗: ${error}`);
+              }
+            }}
+          >
+            <Text style={styles.actionButtonText}>🧪 載入測試歷史 (Load Fake History)</Text>
+          </TouchableOpacity>
+          
+          {/* ⭐ 新增：清除所有歷史數據按鈕 */}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#F44336', marginTop: 12 }]}
+            onPress={() => {
+              console.log('[DevDashboard] 🔴 Clear History button touched!');
+              Alert.alert(
+                '⚠️ 確認清除',
+                '即將清除所有 GPS 歷史軌跡和探索記錄。此操作無法撤銷！',
+                [
+                  { 
+                    text: '取消', 
+                    style: 'cancel',
+                    onPress: () => console.log('[DevDashboard] Clear cancelled by user')
+                  },
+                  {
+                    text: '確認清除',
+                    style: 'destructive',
+                    onPress: async () => {
+                      console.log('[DevDashboard] 🗑️ Step 1: User confirmed clear operation');
+                      
+                      try {
+                        const { useSessionStore } = require('../../stores/sessionStore');
+                        const { gpsHistoryService } = require('../../services/gpsHistory');
+                        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                        const { DevSettings } = require('react-native');
+                        
+                        // Step 1: Clear GPS history service
+                        console.log('[DevDashboard] 🗑️ Step 2: Clearing GPS history service...');
+                        await gpsHistoryService.clearHistory();
+                        console.log('[DevDashboard] ✅ GPS history service cleared');
+                        
+                        // Step 2: Clear ALL related AsyncStorage keys
+                        console.log('[DevDashboard] 🗑️ Step 3: Clearing ALL AsyncStorage keys...');
+                        await AsyncStorage.removeItem('solefood-session-storage'); // Zustand persist
+                        await AsyncStorage.removeItem('gps_history'); // GPS history
+                        await AsyncStorage.removeItem('gps_sessions'); // GPS sessions
+                        await AsyncStorage.removeItem('explored_hexes'); // Explored hexes
+                        console.log('[DevDashboard] ✅ All AsyncStorage keys cleared');
+                        
+                        // Step 3: Wait for AsyncStorage operations to complete
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // Step 4: Verify clear was successful
+                        console.log('[DevDashboard] 🗑️ Step 4: Verifying clear...');
+                        const verifyHistory = await AsyncStorage.getItem('gps_history');
+                        const verifySessions = await AsyncStorage.getItem('gps_sessions');
+                        const verifyPersist = await AsyncStorage.getItem('solefood-session-storage');
+                        console.log('[DevDashboard] Verification:', {
+                          history: verifyHistory ? 'STILL EXISTS!' : 'cleared ✅',
+                          sessions: verifySessions ? 'STILL EXISTS!' : 'cleared ✅',
+                          persist: verifyPersist ? 'STILL EXISTS!' : 'cleared ✅'
+                        });
+                        
+                        // Step 5: Clear session store state
+                        console.log('[DevDashboard] 🗑️ Step 5: Clearing session store state...');
+                        useSessionStore.setState({ 
+                          exploredHexes: new Set<string>(),
+                          currentSessionNewHexes: new Set<string>(),
+                          lastKnownHex: null,
+                        });
+                        console.log('[DevDashboard] ✅ Session store state cleared');
+                        
+                        // Step 6: Wait before reload
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        console.log('[DevDashboard] ✅ All clear operations completed successfully!');
+                        console.log('[DevDashboard] 🔄 Auto-reloading app in 1 second...');
+                        
+                        // Wait a bit more before reload to ensure all async operations complete
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Auto reload the app
+                        DevSettings.reload();
+                      } catch (error) {
+                        console.error('[DevDashboard] ❌ Error during clear operation:', error);
+                        Alert.alert('❌ 錯誤', `清除失敗: ${error}`);
+                      }
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <Text style={styles.actionButtonText}>🗑️ 清除所有歷史 (Clear All History)</Text>
+          </TouchableOpacity>
         </View>
 
         {/* 原有的上帝模式控制和消耗品測試 */}

@@ -48,11 +48,18 @@
     <key>NSCameraUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your camera</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。</string>
+    <string>為了在您走路時持續記錄 GPS 軌跡，我們需要「總是允許」位置權限。即使您關閉螢幕或切換到其他 App，我們也會繼續記錄您的位置。</string>
     <key>NSLocationAlwaysUsageDescription</key>
-    <string>此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。</string>
-    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>為了在背景記錄您的運動軌跡，我們需要「總是允許」位置權限。</string>
+    <key>NSLocationTemporaryUsageDescriptionDictionary</key>
+    <dict>
+      <key>purpose</key>
+      <string>記錄您的運動軌跡</string>
+    </dict>
+    <key>NSLocationUsageDescription</key>
     <string>此應用需要位置權限，以記錄您的 GPS 軌跡。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>為了記錄您的 GPS 軌跡和探索地圖，我們需要位置權限。</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your microphone</string>
     <key>NSPhotoLibraryUsageDescription</key>

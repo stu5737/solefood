@@ -170,6 +170,13 @@ class LocationService {
     onUpdate: (location: LocationData, distance: number) => void
   ): Promise<boolean> {
     try {
+      // ⭐ 防崩潰修復 1：先停止任何可能殘留的監聽（防呆機制）
+      if (this.watchSubscription) {
+        console.log('[LocationService] 🧹 清理舊的 GPS 監聽器（防止重複訂閱）');
+        this.watchSubscription.remove();
+        this.watchSubscription = null;
+      }
+      
       const hasPermission = await this.checkPermissions();
       if (!hasPermission) {
         const granted = await this.requestPermissions();
@@ -181,6 +188,7 @@ class LocationService {
 
       this.onLocationUpdate = onUpdate;
 
+      // ⭐ 防崩潰修復 2：確保 watchSubscription 為 null 後再啟動新的
       this.watchSubscription = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation, // ⭐ STEPN 修復：使用最高精度
@@ -335,6 +343,68 @@ class LocationService {
    */
   getAppState(): AppStateStatus {
     return this.appState;
+  }
+
+  /**
+   * 重啟位置追蹤（用於修復 iOS 模擬器 GPS 訊號中斷問題）
+   * 
+   * 此方法會：
+   * 1. 停止當前的 watchSubscription
+   * 2. 等待 500ms（讓系統清理）
+   * 3. 重新啟動追蹤，保留所有現有的訂閱回調
+   */
+  async restartTracking(): Promise<boolean> {
+    console.log('🔄 [LocationService] Manually restarting GPS listener...');
+    
+    try {
+      // 保存現有的回調（避免丟失訂閱）
+      const savedCallbacks = new Set(this.locationCallbacks);
+      const savedOnUpdate = this.onLocationUpdate;
+      
+      // 1. 強制停止當前監聽
+      if (this.watchSubscription) {
+        console.log('[LocationService] 🧹 Stopping current GPS listener...');
+        this.watchSubscription.remove();
+        this.watchSubscription = null;
+      }
+      
+      // 2. 清除狀態（但保留回調）
+      this.lastLocation = null;
+      this.onLocationUpdate = undefined;
+      this.backgroundLogCounter = 0;
+      
+      // 3. 等待 500ms，讓系統清理
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 4. 重新啟動追蹤
+      // 如果有保存的主回調，使用它；否則使用統一回調分發給所有訂閱者
+      const onUpdate = savedOnUpdate || ((location, distance) => {
+        savedCallbacks.forEach(cb => {
+          try {
+            cb(location, distance);
+          } catch (error) {
+            console.error('[LocationService] Error in location callback:', error);
+          }
+        });
+      });
+      
+      // 恢復回調集合
+      this.locationCallbacks = savedCallbacks;
+      
+      // 重新啟動追蹤
+      const success = await this.startTracking(onUpdate);
+      
+      if (success) {
+        console.log('✅ [LocationService] GPS Listener restarted successfully.');
+      } else {
+        console.error('❌ [LocationService] Failed to restart GPS listener.');
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('[LocationService] ❌ Error restarting GPS:', error);
+      return false;
+    }
   }
 
   /**

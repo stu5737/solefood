@@ -26,6 +26,7 @@ const STORAGE_KEYS = {
   EXPLORED_REGIONS: 'explored_regions',  // 已探索區域
   GPS_HISTORY: 'gps_history',            // GPS 歷史軌跡（7天內的所有點）
   GPS_SESSIONS: 'gps_sessions',          // GPS 採集會話記錄
+  EXPLORED_HEXES: 'explored_hexes',      // ⭐ 已探索的 H3 六邊形（持久化）
 } as const;
 
 /**
@@ -76,36 +77,50 @@ export async function saveData<T>(key: string, data: T): Promise<void> {
 /**
  * 安全讀取數據
  * 
- * 注意：大數據（如 GPS 歷史）可能存儲在 AsyncStorage 中
- * 因此先嘗試從 SecureStore 讀取，如果失敗則從 AsyncStorage 讀取
+ * ⭐ 修復：優先從 AsyncStorage 讀取（因為大數據會存在這裡）
+ * 如果 AsyncStorage 沒有數據，再嘗試 SecureStore
  */
 export async function loadData<T>(key: string): Promise<T | null> {
   try {
     const useSecureStore = await isSecureStoreAvailable();
     let jsonData: string | null = null;
+    let source: 'SecureStore' | 'AsyncStorage' | null = null;
     
-    // 先嘗試從 SecureStore 讀取
-    if (useSecureStore) {
+    // ⭐ 修復：先嘗試從 AsyncStorage 讀取（因為大數據會存在這裡）
+    // 如果 AsyncStorage 有數據，優先使用它
+    try {
+      jsonData = await AsyncStorage.getItem(key);
+      if (jsonData) {
+        source = 'AsyncStorage';
+        console.log(`[Storage] ✅ Loaded ${key} from AsyncStorage (${jsonData.length} bytes)`);
+      }
+    } catch (asyncError) {
+      console.warn(`[Storage] Failed to load ${key} from AsyncStorage:`, asyncError);
+    }
+    
+    // 如果 AsyncStorage 沒有數據，再嘗試 SecureStore
+    if (!jsonData && useSecureStore) {
       try {
         jsonData = await SecureStore.getItemAsync(key);
+        if (jsonData) {
+          source = 'SecureStore';
+          console.log(`[Storage] ✅ Loaded ${key} from SecureStore (${jsonData.length} bytes)`);
+        }
       } catch (secureError) {
-        // SecureStore 讀取失敗，可能是數據不存在或數據太大
-        // 繼續嘗試 AsyncStorage
+        console.warn(`[Storage] Failed to load ${key} from SecureStore:`, secureError);
       }
     }
     
-    // 如果 SecureStore 中沒有數據，嘗試從 AsyncStorage 讀取
     if (!jsonData) {
-      jsonData = await AsyncStorage.getItem(key);
-    }
-    
-    if (!jsonData) {
+      console.log(`[Storage] ⚠️  No data found for key: ${key}`);
       return null;
     }
     
-    return JSON.parse(jsonData) as T;
+    const parsed = JSON.parse(jsonData) as T;
+    console.log(`[Storage] ✅ Successfully parsed ${key} from ${source}`);
+    return parsed;
   } catch (error) {
-    console.error(`[Storage] Failed to load ${key}:`, error);
+    console.error(`[Storage] ❌ Failed to load ${key}:`, error);
     return null;
   }
 }

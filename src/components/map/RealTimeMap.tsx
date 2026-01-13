@@ -5,17 +5,19 @@
  * 顯示實時 GPS 位置並跟隨用戶移動
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Animated, Dimensions, Platform } from 'react-native';
-import MapView, { Marker, Polyline, Region, Polygon } from 'react-native-maps';
+import MapView, { Marker, Polyline, Region, Polygon, Geojson } from 'react-native-maps';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
-import { latLngToH3, H3_RESOLUTION, getH3CellBoundary } from '../../core/math/h3';
+import { latLngToH3, H3_RESOLUTION, getH3CellBoundary, h3ToLatLng } from '../../core/math/h3';
 import { useSessionStore } from '../../stores/sessionStore';
 import { UserMarker } from './UserMarker';
+import LivePath from './LivePath';
 import type { LocationData } from '../../services/location';
 import type { ExploredRegion } from '../../services/exploration';
 import type { MovementInput } from '../../core/entropy/events';
@@ -67,17 +69,23 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // 從 Store 獲取地圖模式和已探索的 H3 六邊形
   const mapMode = useSessionStore((state) => state.mapMode);
   const exploredHexes = useSessionStore((state) => state.exploredHexes);
+  const currentSessionNewHexes = useSessionStore((state) => state.currentSessionNewHexes); // ⭐ 新增：當前會話的新領地
+  const discoverNewHex = useSessionStore((state) => state.discoverNewHex); // ⭐ 新增：探索新領地的方法
   const updateExploredHexesFromHistory = useSessionStore((state) => state.updateExploredHexesFromHistory);
   const totalDistance = useSessionStore((state) => state.totalDistance);
   
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
   const [markerKey, setMarkerKey] = useState(0); // ⭐ Android 強力修復：用於強制觸發 UserMarker re-render
-  const [trailCoordinates, setTrailCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [historyStartPoint, setHistoryStartPoint] = useState<{ latitude: number; longitude: number } | null>(null);
   const [historyEndPoint, setHistoryEndPoint] = useState<{ latitude: number; longitude: number } | null>(null);
   const [exploredRegions, setExploredRegions] = useState<ExploredRegion[]>([]);
   const [frequentRegions, setFrequentRegions] = useState<Array<{ h3Index: string; visitCount: number }>>([]); // 7天內訪問頻繁的區域
   const [currentRegion, setCurrentRegion] = useState<Region | null>(null);
+  // ⭐ 新增：追蹤 exploredHexes 的變化，用於強制重繪
+  const [hexesRenderKey, setHexesRenderKey] = useState(0);
+  const [isHydrated, setIsHydrated] = useState(false);
+  // ⭐⭐ 修復 4: 強制卸載 LivePath 的狀態（防止多次採集循環後的 GPS 軌跡殘留）
+  const [forceUnmountLivePath, setForceUnmountLivePath] = useState(false);
   // ⭐ Android 修復：增加 mapReady 狀態鎖
   const [isMapReady, setIsMapReady] = useState(false);
   // ⭐ Android 修復：追蹤是否已經執行過初次聚焦
@@ -96,8 +104,360 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // 穩定的 coordinate 對象（使用 ref 避免每次 render 都創建新對象）
   const stableCoordinateRef = useRef<{ latitude: number; longitude: number } | null>(null);
   
+  // ⚡️ STEPN 級別優化：使用 useRef + 強制更新策略，完全避免不必要的 re-render
+  const trailCoordinatesRef = useRef<Array<{ latitude: number; longitude: number }>>([]);
+  const [trailUpdateTrigger, setTrailUpdateTrigger] = useState(0); // 只在需要時觸發更新
+  
+  // ⭐ 修復閃爍：緩存上一次的軌跡資訊，用於深度比較
+  const lastTrailLengthRef = useRef<number>(0);
+  const lastTrailLastPointRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0); // ⚡️ 新增：時間節流
+  
+  // 穩定的軌跡引用（只在 trigger 變化時才重新計算）
+  const trailCoordinates = useMemo(() => {
+    return trailCoordinatesRef.current;
+  }, [trailUpdateTrigger]);
+  
+  // ⚡️ 輔助函數：更新軌跡（只在真正需要時觸發 re-render + 時間節流）
+  const MIN_UPDATE_INTERVAL = 2000; // 最小更新間隔：2 秒（進一步降低更新頻率）
+  
+  const updateTrailCoordinates = useCallback((newTrail: Array<{ latitude: number; longitude: number }>) => {
+    const now = Date.now();
+    
+    // 深度比較：只有當軌跡長度改變或最後一個點改變時才更新
+    const isLengthChanged = newTrail.length !== lastTrailLengthRef.current;
+    const isLastPointChanged = newTrail.length > 0 && (
+      !lastTrailLastPointRef.current ||
+      Math.abs(lastTrailLastPointRef.current.latitude - newTrail[newTrail.length - 1].latitude) > 0.000001 ||
+      Math.abs(lastTrailLastPointRef.current.longitude - newTrail[newTrail.length - 1].longitude) > 0.000001
+    );
+    const isCleared = newTrail.length === 0 && lastTrailLengthRef.current > 0;
+    
+    const shouldUpdate = isLengthChanged || isLastPointChanged || isCleared;
+    
+    // ⚡️ 時間節流：只有新增點或距離上次更新超過 MIN_UPDATE_INTERVAL 才更新
+    const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+    const canUpdate = isLengthChanged || isCleared || timeSinceLastUpdate >= MIN_UPDATE_INTERVAL;
+    
+    if (shouldUpdate && canUpdate) {
+      trailCoordinatesRef.current = newTrail;
+      lastTrailLengthRef.current = newTrail.length;
+      lastTrailLastPointRef.current = newTrail.length > 0 ? newTrail[newTrail.length - 1] : null;
+      lastUpdateTimeRef.current = now;
+      setTrailUpdateTrigger(prev => prev + 1); // 觸發 useMemo 重新計算
+    }
+  }, []);
+  
+  // ⭐ 移除：自定義縮放控制函數（已改用原生縮放控制）
+  
+  // ⭐ 新增：低多邊形圓形生成函數（高效能版本）
+  const getLowPolyCircle = useCallback((centerLat: number, centerLng: number, radiusMeters: number, steps: number = 10): number[][] => {
+    const coords: number[][] = [];
+    const earthRadius = 6378137; // 地球半徑（米）
+
+    // ⚡ 效能關鍵：只用 10 個點來模擬圓形
+    for (let i = 0; i < steps; i++) {
+      const angle = (i * 360) / steps;
+      const rad = (angle * Math.PI) / 180;
+
+      // 計算圓形上的點（考慮緯度對經度的影響）
+      const dx = radiusMeters * Math.cos(rad);
+      const dy = radiusMeters * Math.sin(rad);
+
+      const dLat = (dy / earthRadius) * (180 / Math.PI);
+      const dLng = (dx / (earthRadius * Math.cos((centerLat * Math.PI) / 180))) * (180 / Math.PI);
+
+      // GeoJSON 格式：[lng, lat]（經度在前）
+      coords.push([centerLng + dLng, centerLat + dLat]);
+    }
+
+    // 確保多邊形閉合（第一個點和最後一個點相同）
+    if (coords.length > 0 && (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])) {
+      coords.push([coords[0][0], coords[0][1]]);
+    }
+
+    return coords;
+  }, []);
+
   // 根據 showHistoryTrail 確定實際的地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
+
+  // ⭐ 新增：將 exploredHexes 轉換為 GeoJSON（圓形氣泡風格，使用 useMemo 優化效能）
+  const h3GeoJsonData = useMemo(() => {
+    // ⭐ 修復：嚴格的空值檢查，沒資料就不回傳物件
+    if (!isHydrated || exploredHexes.size === 0) {
+      return null;
+    }
+
+    const hexesArray = Array.from(exploredHexes);
+    
+    // ⭐ 修復：移除視口過濾（避免 currentRegion 變化導致重新計算）
+    // 直接處理所有 hexes，讓地圖引擎自己處理視口裁剪
+    const hexesToProcess = hexesArray;
+
+    // ⚡ 效能關鍵：10 邊形圓形（視覺上像圓，效能接近六邊形）
+    const CIRCLE_RADIUS_METERS = 20; // ⭐ 圓形半徑：20m
+    const CIRCLE_STEPS = 10; // 10 邊形（低多邊形，高效能）
+
+    // ⭐ 優化：轉換為 MultiPolygon 結構（圓形氣泡）+ 間隔採樣
+    const multiPolygonCoordinates = hexesToProcess
+      .map((h3Index) => {
+        if (!h3Index || typeof h3Index !== 'string') {
+          return null;
+        }
+
+        // ⭐ 修復：移除採樣邏輯，渲染所有 H3（確保完整顯示歷史軌跡）
+        // 32 個 H3 圓形不會影響性能，保證用戶看到完整的探索記錄
+
+        // 獲取 H3 中心點
+        const center = h3ToLatLng(h3Index);
+        if (!center) {
+          // 降級方案：如果無法獲取中心點，使用邊界計算中心
+          const boundary = getH3CellBoundary(h3Index);
+          if (boundary.length === 0) {
+            return null;
+          }
+          const centerLat = boundary.reduce((sum, [lat]) => sum + lat, 0) / boundary.length;
+          const centerLng = boundary.reduce((sum, [, lng]) => sum + lng, 0) / boundary.length;
+          
+          // 生成低多邊形圓形座標
+          const circleCoords = getLowPolyCircle(centerLat, centerLng, CIRCLE_RADIUS_METERS, CIRCLE_STEPS);
+          return [circleCoords];
+        }
+
+        // 生成低多邊形圓形座標
+        const circleCoords = getLowPolyCircle(center.latitude, center.longitude, CIRCLE_RADIUS_METERS, CIRCLE_STEPS);
+
+        // MultiPolygon 的每個 polygon 需要外層陣列：[[coordinates]]
+        return [circleCoords];
+      })
+      .filter((polygon): polygon is NonNullable<typeof polygon> => polygon !== null);
+
+    // ⭐ 修復：如果沒有有效的 polygons，直接返回 null（避免空物件）
+    if (multiPolygonCoordinates.length === 0) {
+      return null;
+    }
+
+    // ⭐ 優化：使用單一 Feature<MultiPolygon> 結構
+    const geoJson = {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {}, // 不需要個別屬性，提升效能
+          geometry: {
+            type: 'MultiPolygon' as const,
+            coordinates: multiPolygonCoordinates, // MultiPolygon 結構：[[[lng, lat], ...]], [[[lng, lat], ...]], ...
+          },
+        },
+      ],
+    };
+
+    const totalHexes = exploredHexes.size;
+    const renderedHexes = multiPolygonCoordinates.length;
+    const samplingRate = totalHexes > 0 ? ((renderedHexes / totalHexes) * 100).toFixed(1) : '0';
+
+    console.log(`[RealTimeMap] 🎨 GeoJSON 圓形氣泡轉換完成: ${renderedHexes} 個圓形 (採樣率: ${samplingRate}%)`, {
+      totalHexes,
+      renderedHexes,
+      circleCount: multiPolygonCoordinates.length,
+      stepsPerCircle: CIRCLE_STEPS,
+      radiusMeters: CIRCLE_RADIUS_METERS,
+      samplingRate: `${samplingRate}%`,
+    });
+
+    return geoJson;
+  }, [hexesRenderKey, isHydrated, getLowPolyCircle]); // ⭐ 使用 hexesRenderKey 確保內容變化時正確更新
+
+  // ⭐ 新增：將當前會話的新 H3 轉換為 GeoJSON（高亮顯示，探索者模式的「即時墨水」）
+  const currentSessionGeoJsonData = useMemo(() => {
+    // ⚡️ 關鍵修復：使用 .size 作為依賴，確保清空時正確響應
+    // 只在遊戲模式且有新格子時渲染
+    if (!isHydrated || currentSessionNewHexes.size === 0) {
+      console.log('[RealTimeMap] 🎨 當前會話 GeoJSON: 無新格子或未 hydrated');
+      return null;
+    }
+
+    const hexesArray = Array.from(currentSessionNewHexes);
+    
+    // ⚡ 當前會話不需要採樣，全部渲染（因為數量較少）
+    const CIRCLE_RADIUS_METERS = 20; // 與歷史軌跡相同半徑
+    const CIRCLE_STEPS = 10;
+
+    const multiPolygonCoordinates = hexesArray
+      .map((h3Index) => {
+        if (!h3Index || typeof h3Index !== 'string') {
+          return null;
+        }
+
+        // 獲取 H3 中心點
+        const center = h3ToLatLng(h3Index);
+        if (!center) {
+          const boundary = getH3CellBoundary(h3Index);
+          if (boundary.length === 0) {
+            return null;
+          }
+          const centerLat = boundary.reduce((sum, [lat]) => sum + lat, 0) / boundary.length;
+          const centerLng = boundary.reduce((sum, [, lng]) => sum + lng, 0) / boundary.length;
+          
+          const circleCoords = getLowPolyCircle(centerLat, centerLng, CIRCLE_RADIUS_METERS, CIRCLE_STEPS);
+          return [circleCoords];
+        }
+
+        const circleCoords = getLowPolyCircle(center.latitude, center.longitude, CIRCLE_RADIUS_METERS, CIRCLE_STEPS);
+        return [circleCoords];
+      })
+      .filter((polygon): polygon is NonNullable<typeof polygon> => polygon !== null);
+
+    if (multiPolygonCoordinates.length === 0) {
+      return null;
+    }
+
+    const geoJson = {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {},
+          geometry: {
+            type: 'MultiPolygon' as const,
+            coordinates: multiPolygonCoordinates,
+          },
+        },
+      ],
+    };
+
+    console.log(`[RealTimeMap] 🎨 當前會話 GeoJSON 轉換完成: ${multiPolygonCoordinates.length} 個圓形`, {
+      totalNewHexes: currentSessionNewHexes.size,
+      renderedCircles: multiPolygonCoordinates.length,
+      radiusMeters: CIRCLE_RADIUS_METERS,
+    });
+
+    return geoJson;
+  }, [currentSessionNewHexes.size, isHydrated, getLowPolyCircle]); // ⚡️ 使用 .size 作為依賴
+
+  // ⭐ 新增：監聽 exploredHexes 變化，強制重繪
+  useEffect(() => {
+    if (exploredHexes.size > 0) {
+      setHexesRenderKey(prev => prev + 1);
+      console.log('[RealTimeMap] 🔄 exploredHexes changed, forcing re-render:', exploredHexes.size);
+    }
+  }, [exploredHexes.size]);
+
+  // ⭐ 新增：監聽採集狀態變化，確保停止時清除當前會話的視覺元素
+  useEffect(() => {
+    if (!isCollecting) {
+      console.log('[RealTimeMap] 🛑 採集已停止，當前會話新 H3 數量:', currentSessionNewHexes.size);
+      console.log('[RealTimeMap] 🎨 綠色層已隱藏（通過 isCollecting 條件），青色層應包含:', exploredHexes.size, '個 H3');
+      
+      // ⚡️⚡️ 修復 4 (步驟 1): 立即強制卸載 LivePath
+      setForceUnmountLivePath(true);
+      console.log('[RealTimeMap] 🗑️ 強制卸載 LivePath（防止多次採集後的殘留）');
+      
+      // ⚡️ 修復 1: 強制重新渲染 UserMarker（防止消失）
+      setMarkerKey(prev => prev + 1);
+      console.log('[RealTimeMap] 🔄 UserMarker key 已更新，強制重新渲染');
+      
+      // ⚡️ 修復 2: 短暫延遲後更新 H3 圖層，等待 mergeCurrentSessionHexes 完成
+      // 因為現在不會提前清空 currentSessionNewHexes，數據會正確合併，只需一次更新
+      setTimeout(() => {
+        setHexesRenderKey(prev => prev + 1);
+        console.log('[RealTimeMap] 🔄 H3 render key 已更新，顯示合併後的完整數據');
+      }, 300);
+      
+      // ⚡️ 修復 3: 強化 GPS 軌跡清理（多次強制重新渲染，確保完全清除）
+      // 第一次：立即清空所有 GPS 軌跡數據
+      trailCoordinatesRef.current = [];
+      lastTrailLengthRef.current = 0;
+      lastTrailLastPointRef.current = null;
+      lastUpdateTimeRef.current = 0;
+      setTrailUpdateTrigger(prev => prev + 1);
+      console.log('[RealTimeMap] 🗑️ GPS 軌跡已立即清除（第 1 次）');
+      
+      // 第二次：0ms 延遲（確保 React 更新循環完成）
+      setTimeout(() => {
+        trailCoordinatesRef.current = [];
+        lastTrailLengthRef.current = 0;
+        lastTrailLastPointRef.current = null;
+        lastUpdateTimeRef.current = 0;
+        setTrailUpdateTrigger(prev => prev + 1);
+        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 2 次，0ms 後）');
+      }, 0);
+      
+      // 第三次：50ms 延遲（確保視圖更新）
+      setTimeout(() => {
+        trailCoordinatesRef.current = [];
+        lastTrailLengthRef.current = 0;
+        lastTrailLastPointRef.current = null;
+        lastUpdateTimeRef.current = 0;
+        setTrailUpdateTrigger(prev => prev + 1);
+        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 3 次，50ms 後）');
+      }, 50);
+      
+      // 第四次：100ms 延遲（最終確認，確保無殘留）
+      setTimeout(() => {
+        trailCoordinatesRef.current = [];
+        lastTrailLengthRef.current = 0;
+        lastTrailLastPointRef.current = null;
+        lastUpdateTimeRef.current = 0;
+        setTrailUpdateTrigger(prev => prev + 1);
+        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 4 次，100ms 後）- 確認長度:', trailCoordinatesRef.current.length, '應為 0');
+      }, 100);
+      
+      // ⚡️⚡️ 修復 4 (步驟 2): 200ms 後重新啟用 LivePath（確保下次採集時正常渲染）
+      setTimeout(() => {
+        setForceUnmountLivePath(false);
+        console.log('[RealTimeMap] ✅ LivePath 已重新啟用（準備下次採集）');
+      }, 200);
+      
+      // ⭐ 修復：不再提前清除 currentSessionNewHexes
+      // 讓 endSession → mergeCurrentSessionHexes 自然處理合併和清除
+      // 避免在合併之前就清空數據導致漏圖
+      console.log('[RealTimeMap] 🛑 採集已停止，等待 endSession 自動合併 H3 數據');
+    } else {
+      // ⚡️⚡️ 修復 4 (步驟 3): 採集開始時，確保 LivePath 可以渲染
+      setForceUnmountLivePath(false);
+      console.log('[RealTimeMap] ▶️ 採集進行中，當前會話新 H3 數量:', currentSessionNewHexes.size);
+    }
+  }, [isCollecting, currentSessionNewHexes.size, exploredHexes.size]);
+  
+  // ⭐ 新增：檢查 hydration 狀態
+  useEffect(() => {
+    // 檢查 persist 是否已完成 hydration
+    const checkHydration = async () => {
+      // 給一個短暫延遲，確保 persist 完成
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // 如果 exploredHexes 有數據，說明已經 hydrated
+      if (exploredHexes.size > 0) {
+        setIsHydrated(true);
+        console.log('[RealTimeMap] ✅ Store hydrated, exploredHexes:', exploredHexes.size);
+      } else {
+        // 如果沒有數據，嘗試手動觸發 updateExploredHexesFromHistory
+        console.log('[RealTimeMap] ⚠️  No exploredHexes, triggering updateExploredHexesFromHistory...');
+        try {
+          await updateExploredHexesFromHistory();
+          const { useSessionStore } = require('../../stores/sessionStore');
+          const store = useSessionStore.getState();
+          console.log('[RealTimeMap] ✅ After updateExploredHexesFromHistory, exploredHexes:', store.exploredHexes.size);
+          setIsHydrated(true);
+        } catch (error) {
+          console.error('[RealTimeMap] ❌ Failed to update exploredHexes:', error);
+          setIsHydrated(true); // 即使失敗也標記為 hydrated，避免無限等待
+        }
+      }
+    };
+    
+    checkHydration();
+  }, []);
+  
+  // ⭐ 新增：當 mapMode 改變時，重新更新 exploredHexes
+  useEffect(() => {
+    if (actualMapMode === 'GAME' && isHydrated) {
+      console.log('[RealTimeMap] 🔄 Map mode changed to GAME, updating exploredHexes...');
+      updateExploredHexesFromHistory().catch(console.error);
+    }
+  }, [actualMapMode, isHydrated]);
 
   // ⭐ Android 修復：實作「初次聚焦」邏輯（雙重鎖定機制）
   useEffect(() => {
@@ -187,7 +547,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           latitude: point.latitude,
           longitude: point.longitude,
         }));
-        setTrailCoordinates(fullTrail);
+        updateTrailCoordinates(fullTrail);
         
         // 設置起點和終點
         const startPoint = {
@@ -221,37 +581,45 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       } else {
         setHistoryStartPoint(null);
         setHistoryEndPoint(null);
-        setTrailCoordinates([]);
+        updateTrailCoordinates([]);
       }
     } else if (isCollecting && gpsHistoryService.isSessionActive()) {
       // 如果正在採集會話中，載入當前會話的完整軌跡
       const currentTrail = gpsHistoryService.getCurrentSessionTrail();
       if (currentTrail.length > 0) {
-        setTrailCoordinates(currentTrail.map(point => ({
+        const newTrail = currentTrail.map(point => ({
           latitude: point.latitude,
           longitude: point.longitude,
-        })));
+        }));
+        updateTrailCoordinates(newTrail);
       } else {
-        setTrailCoordinates([]);
+        updateTrailCoordinates([]);
       }
       // 清空歷史起終點
       setHistoryStartPoint(null);
       setHistoryEndPoint(null);
     } else {
       // 沒有活動會話且不在查看歷史時，不顯示軌跡
-      setTrailCoordinates([]);
+      updateTrailCoordinates([]);
       setHistoryStartPoint(null);
       setHistoryEndPoint(null);
     }
   }, [selectedSessionId, showHistoryTrail, isCollecting]);
 
 
-  // 初始化時載入已探索的 H3 六邊形（從7天歷史軌跡）
+  // ⭐ 需求 1：靜態渲染 - 只在進入 GAME 模式時渲染一次（不邊走邊渲染）
   useEffect(() => {
     if (mapMode === 'GAME') {
-      updateExploredHexesFromHistory();
+      // 只在進入 GAME 模式時渲染一次（靜態）
+      const timer = setTimeout(() => {
+        updateExploredHexesFromHistory();
+      }, 500); // 延遲 500ms 確保服務已初始化
+      
+      return () => clearTimeout(timer);
     }
   }, [mapMode, updateExploredHexesFromHistory]);
+  
+  // ⭐ 移除定期更新（不再邊走邊渲染）
   
   // 載入已探索區域和7天歷史統計（用於其他功能，如開拓者模式判斷）
   useEffect(() => {
@@ -320,7 +688,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
               latitude: point.latitude,
               longitude: point.longitude,
             }));
-            setTrailCoordinates(fullTrail);
+            updateTrailCoordinates(fullTrail);
             
             // 設置起點和終點
             const startPoint = {
@@ -353,10 +721,23 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         } else if (isCollecting && gpsHistoryService.isSessionActive()) {
           const currentTrail = gpsHistoryService.getCurrentSessionTrail();
           if (currentTrail.length > 0) {
-            setTrailCoordinates(currentTrail.map(point => ({
+            const newTrail = currentTrail.map(point => ({
               latitude: point.latitude,
               longitude: point.longitude,
-            })));
+            }));
+            
+            // ⚡️ 深度比較：只有當軌跡長度改變或最後一個點改變時才更新
+            const shouldUpdate = 
+              newTrail.length !== lastTrailLengthRef.current ||
+              (newTrail.length > 0 && (
+                !lastTrailLastPointRef.current ||
+                Math.abs(lastTrailLastPointRef.current.latitude - newTrail[newTrail.length - 1].latitude) > 0.000001 ||
+                Math.abs(lastTrailLastPointRef.current.longitude - newTrail[newTrail.length - 1].longitude) > 0.000001
+              ));
+            
+            if (shouldUpdate) {
+              updateTrailCoordinates(newTrail);
+            }
           }
         }
       } else {
@@ -427,6 +808,18 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         // 記錄到當前會話
         gpsHistoryService.addPoint(location, distance);
         
+        // ⭐ 新增：探索者模式 - 即時發現新領地（邊走邊畫）
+        if (mapMode === 'GAME' && location.latitude && location.longitude) {
+          const { latLngToH3, H3_RESOLUTION } = require('../../core/math/h3');
+          const h3Index = latLngToH3(location.latitude, location.longitude, H3_RESOLUTION);
+          if (h3Index) {
+            const isNew = discoverNewHex(h3Index);
+            if (isNew) {
+              console.log('[RealTimeMap] 🎯 New territory discovered:', h3Index);
+            }
+          }
+        }
+        
         // ⚠️ 注意：背景模式下的記錄現在在 locationService 中處理（不依賴 React 組件狀態）
         // 這裡只在前景模式下額外記錄（可選，但保留也不影響，因為會檢查 appState）
         // 為了避免重複計數，只在前景模式下記錄
@@ -481,16 +874,26 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }
         
-        // 更新當前會話的軌跡顯示
+        // ⭐ 修復閃爍：更新當前會話的軌跡顯示（只有當軌跡真正改變時才更新狀態）
         const currentTrail = gpsHistoryService.getCurrentSessionTrail();
         const newTrail = currentTrail.map(point => ({
           latitude: point.latitude,
           longitude: point.longitude,
         }));
         
-        console.log('[RealTimeMap] Updating current session trail with', newTrail.length, 'points');
-        if (newTrail.length > 0) {
-          setTrailCoordinates(newTrail);
+        // ⭐ 深度比較：只有當軌跡長度改變或最後一個點改變時才更新
+        const shouldUpdate = 
+          newTrail.length !== lastTrailLengthRef.current ||
+          (newTrail.length > 0 && (
+            !lastTrailLastPointRef.current ||
+            Math.abs(lastTrailLastPointRef.current.latitude - newTrail[newTrail.length - 1].latitude) > 0.000001 ||
+            Math.abs(lastTrailLastPointRef.current.longitude - newTrail[newTrail.length - 1].longitude) > 0.000001
+          )) ||
+          (newTrail.length === 0 && lastTrailLengthRef.current > 0); // 軌跡被清空時也要更新
+        
+        if (shouldUpdate) {
+          console.log('[RealTimeMap] Updating current session trail with', newTrail.length, 'points');
+          updateTrailCoordinates(newTrail);
         }
       }
       
@@ -498,11 +901,18 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       // 只有在跟隨模式時，地圖才會自動跟隨用戶位置（followsUserLocation={followMode !== 'NONE'}）
     });
 
+    // ⭐ 防崩潰修復：嚴格的生命週期清理
     return () => {
+      console.log('[RealTimeMap] 🧹 清理位置訂閱（防止記憶體洩漏）');
       // 清理訂閱
       if (subscriptionRef.current) {
-        subscriptionRef.current.remove();
-        subscriptionRef.current = null;
+        try {
+          subscriptionRef.current.remove();
+          subscriptionRef.current = null;
+          console.log('[RealTimeMap] ✅ 位置訂閱已清理');
+        } catch (error) {
+          console.warn('[RealTimeMap] ⚠️  清理訂閱時出錯:', error);
+        }
       }
     };
   }, [isCollecting, showTrail, showHistoryTrail, selectedSessionId]); // 依賴：採集狀態、軌跡顯示、歷史查看
@@ -649,11 +1059,13 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
     >
       <MapView
         ref={mapRef}
+        // ⭐ 修復：移除 key（避免地圖重新創建，影響縮放功能）
         style={[mapStyle, { backgroundColor: '#1A1A1A' }]}
         initialRegion={getInitialRegion()}
         onMapReady={handleMapReady} // ⭐ Android 修復：地圖準備完成的 callback
-        showsUserLocation={!currentLocation && !stableCoordinateRef.current && !lastValidLocationRef.current} // ⭐ Android 強力修復：如果完全沒有座標，顯示系統藍點
+        showsUserLocation={false} // ⭐ 只顯示自定義藍色 Marker
         showsMyLocationButton={false}
+        showsZoomControls={true} // ⭐ 新增：Android 原生縮放控制
         followsUserLocation={followMode !== 'NONE' && actualMapMode === 'GAME'}
         showsCompass={true}
         showsScale={true}
@@ -798,67 +1210,30 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }}
       >
-        {/* 主遊戲模式：顯示過去7天內走過的H3六邊形（僅渲染視野內的格子以優化性能） */}
-        {actualMapMode === 'GAME' && (() => {
-          // 視口過濾（Viewport Culling）：只渲染當前屏幕範圍內的格子
-          const visibleHexes = Array.from(exploredHexes).filter((h3Index) => {
-            if (!currentRegion) return true; // 如果沒有區域信息，顯示所有
-            
-            // 獲取 H3 格子的邊界
-            const boundary = getH3CellBoundary(h3Index);
-            if (boundary.length === 0) return false;
-            
-            // 計算格子的邊界框（bounding box）
-            const lats = boundary.map(([lat]) => lat);
-            const lngs = boundary.map(([, lng]) => lng);
-            const minLat = Math.min(...lats);
-            const maxLat = Math.max(...lats);
-            const minLng = Math.min(...lngs);
-            const maxLng = Math.max(...lngs);
-            
-            // 檢查格子是否與當前視野區域重疊
-            const viewMinLat = currentRegion.latitude - currentRegion.latitudeDelta / 2;
-            const viewMaxLat = currentRegion.latitude + currentRegion.latitudeDelta / 2;
-            const viewMinLng = currentRegion.longitude - currentRegion.longitudeDelta / 2;
-            const viewMaxLng = currentRegion.longitude + currentRegion.longitudeDelta / 2;
-            
-            // 檢查是否有重疊
-            return !(maxLat < viewMinLat || minLat > viewMaxLat || maxLng < viewMinLng || minLng > viewMaxLng);
-          });
-          
-          // 限制渲染數量以優化性能（如果格子數量超過 500，只渲染視野內的）
-          const hexesToRender = visibleHexes.length > 500 ? visibleHexes.slice(0, 500) : visibleHexes;
-          
-          return hexesToRender.map((h3Index) => {
-            const boundary = getH3CellBoundary(h3Index);
-            if (boundary.length === 0) return null;
-            
-            // 計算邊界的中心點
-            const centerLat = boundary.reduce((sum, [lat]) => sum + lat, 0) / boundary.length;
-            const centerLng = boundary.reduce((sum, [, lng]) => sum + lng, 0) / boundary.length;
-            
-            // 將邊界座標縮放 90%（向中心縮小，創造縫隙）
-            const scale = 0.9;
-            const scaledCoordinates = boundary.map(([lat, lng]) => {
-              const scaledLat = centerLat + (lat - centerLat) * scale;
-              const scaledLng = centerLng + (lng - centerLng) * scale;
-              return {
-                latitude: scaledLat,
-                longitude: scaledLng,
-              };
-            });
-            
-            return (
-              <Polygon
-                key={`explored_hex_${h3Index}`}
-                coordinates={scaledCoordinates}
-                fillColor="rgba(34, 197, 94, 0.25)" // 極淡的綠色，確保道路可見
-                strokeColor="transparent" // 完全透明邊框，消除網格感
-                zIndex={1} // 確保在道路文字下方
-              />
-            );
-          });
-        })()}
+        {/* ⭐ 優化：使用 GeoJSON MultiPolygon 渲染 H3 圓形氣泡（Teal 配色，與綠色路徑搭配） */}
+        {actualMapMode === 'GAME' && isHydrated && h3GeoJsonData && (
+          <Geojson
+            key={`history-bubbles-${exploredHexes.size}-${hexesRenderKey}`} // ⭐⭐ 修復 2：結合 size 和 renderKey，確保多次採集後正確重繪
+            geojson={h3GeoJsonData}
+            fillColor="rgba(38, 166, 154, 0.2)" // ⭐ Teal 400，20% 透明度（類比色和諧，與綠色路徑搭配）
+            strokeColor="rgba(0, 0, 0, 0)" // 無邊框（完全透明）
+            strokeWidth={0} // 無邊框
+            zIndex={1} // ⭐ 在底圖之上，但在玩家游標之下
+          />
+        )}
+
+        {/* ⭐ 新增：當前會話的新領地（高亮顯示，探索者模式的「即時墨水」） */}
+        {/* ⚡️ 關鍵修復：只在採集進行中時顯示綠色層，停止時立即隱藏 */}
+        {actualMapMode === 'GAME' && isCollecting && isHydrated && currentSessionGeoJsonData && (
+          <Geojson
+            key="current-session-layer"
+            geojson={currentSessionGeoJsonData}
+            fillColor="rgba(76, 175, 80, 0.4)" // ⭐ 亮綠色，40% 透明度（高亮，表示「新鮮墨水」）
+            strokeColor="rgba(76, 175, 80, 0.6)" // ⭐ 半透明綠色邊框
+            strokeWidth={1}
+            zIndex={2} // ⭐ 在歷史軌跡之上，表示「最新探索」
+          />
+        )}
 
         {/* 歷史軌跡模式：顯示軌跡線 */}
         {actualMapMode === 'HISTORY' && showTrail && trailCoordinates.length > 1 && (
@@ -872,15 +1247,16 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           />
         )}
         
-        {/* 主遊戲模式的當前會話軌跡（如果正在採集） */}
-        {actualMapMode === 'GAME' && isCollecting && showTrail && trailCoordinates.length > 1 && (
-          <Polyline
+        {/* 主遊戲模式的當前會話軌跡（如果正在採集）- 使用互補色對比 */}
+        {/* ⭐⭐ 修復 4 (步驟 4): 添加 forceUnmountLivePath 條件，確保採集停止時立即卸載 */}
+        {actualMapMode === 'GAME' && isCollecting && !forceUnmountLivePath && showTrail && trailCoordinates.length >= 2 && (
+          <LivePath
+            key="live-path-collecting" // ⭐⭐ 修復 1：簡化為固定 key，完全依賴條件渲染控制生命週期
             coordinates={trailCoordinates}
-            strokeColor="#4CAF50" // 當前會話用綠色
-            strokeWidth={4}
-            lineCap="round"
-            lineJoin="round"
-            opacity={1.0}
+            strokeColor="rgba(255, 112, 67, 0.85)" // 🔥 Coral Orange - 與 Teal 背景完美互補，STEPN 風格
+            strokeWidth={5}
+            opacity={0.95} // ⚡️ 高透明度確保清晰可見
+            zIndex={3}
           />
         )}
 
@@ -930,7 +1306,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           if (actualMapMode === 'GAME' && markerCoord) {
             return (
               <UserMarker
-                key={`marker-${markerCoord.latitude.toFixed(6)}-${markerCoord.longitude.toFixed(6)}-${markerKey}`} // ⭐ Android 強力修復：添加 markerKey 強迫重繪
+                key={`user-marker-${markerKey}`} // ⭐ 動態 key，採集結束時強制重建
                 coordinate={markerCoord}
               />
             );
@@ -951,6 +1327,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           </Text>
         </View>
       )}
+
+      {/* ⭐ 移除：自定義縮放按鈕（已改用原生縮放控制） */}
 
       {/* 定位/羅盤按鈕（三態循環切換，只在主遊戲模式顯示） */}
       {actualMapMode === 'GAME' && currentLocation && (
@@ -1044,6 +1422,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     opacity: 0.8,
   },
+  // ⭐ 移除：自定義縮放控制按鈕樣式（已改用原生縮放控制）
   // 歸位按鈕樣式
   recenterButtonContainer: {
     position: 'absolute',

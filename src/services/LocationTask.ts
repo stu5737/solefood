@@ -17,6 +17,7 @@ import { gpsHistoryService } from './gpsHistory';
 import { explorationService } from './exploration';
 import { entropyEngine } from '../core/entropy/engine';
 import { calculateDistance, isValidGPSPoint, type GPSPoint } from '../core/math/distance';
+import { latLngToH3, H3_RESOLUTION } from '../core/math/h3';
 import type { MovementInput } from '../core/entropy/events';
 
 /**
@@ -35,19 +36,64 @@ export const LOCATION_TASK_NAME = 'GAME_LOCATION_TRACKING';
  * 4. 如果不在採集，僅更新當前位置（不執行遊戲邏輯）
  */
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
-  // 終端日誌：任務被觸發
-  const taskStartTime = new Date().toLocaleTimeString('zh-TW', { 
-    hour12: false, 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit',
-    fractionalSecondDigits: 3
-  });
-  console.log(`\n[LocationTask] 🔄 背景任務觸發 [${taskStartTime}]`);
+  // ⭐ 減少日誌頻率：只在第一次或每 10 次顯示一次任務觸發日誌
+  const taskCount = (global as any).__locationTaskExecutionCount || 0;
+  (global as any).__locationTaskExecutionCount = taskCount + 1;
+  
+  // 只在第一次或每 10 次顯示一次（減少日誌噪音）
+  if (taskCount === 0 || taskCount % 10 === 0) {
+    const taskStartTime = new Date().toLocaleTimeString('zh-TW', { 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit',
+      fractionalSecondDigits: 3
+    });
+    console.log(`[LocationTask] 🔄 背景任務觸發 [${taskStartTime}] (執行次數: ${taskCount + 1})`);
+  }
   
   if (error) {
-    console.error('[LocationTask] ❌ Task error:', error);
-    return;
+    // ⭐ 詳細的錯誤處理
+    const errorCode = (error as any)?.code;
+    const errorMessage = (error as any)?.message || String(error);
+    
+    // ⭐ 針對 kCLErrorDomain Code=0 的特殊處理（模擬器已知限制）
+    if (errorMessage.includes('kCLErrorDomain') || errorCode === 0) {
+      // ⭐ 降級為 warn，並減少日誌頻率（只在第一次或每 20 次顯示一次）
+      const errorCount = (global as any).__locationTaskErrorCount || 0;
+      (global as any).__locationTaskErrorCount = errorCount + 1;
+      
+      // 只在第一次或每 20 次顯示一次警告（減少日誌噪音）
+      if (errorCount === 0) {
+        console.warn('[LocationTask] ⚠️  iOS 模擬器背景位置任務限制（已知問題，將靜默處理）');
+        console.warn('[LocationTask] 💡 這是模擬器的已知限制，不影響前台功能');
+        console.warn('[LocationTask] 💡 背景功能請在真機上測試');
+      } else if (errorCount % 20 === 0) {
+        console.warn(`[LocationTask] ⚠️  模擬器限制錯誤（已發生 ${errorCount} 次，繼續靜默處理）`);
+      }
+      
+      // ⭐ 不直接返回，讓任務繼續嘗試（可能下次會成功）
+      // 如果 data 存在，繼續處理
+    } else {
+      // 其他錯誤：正常記錄
+      console.error('[LocationTask] ❌ Task error:', error);
+      console.error('[LocationTask] 錯誤代碼:', errorCode);
+      console.error('[LocationTask] 錯誤訊息:', errorMessage);
+      
+      if (errorCode === 1) {
+        console.error('[LocationTask] 💡 錯誤類型: kCLErrorLocationUnknown');
+        console.error('[LocationTask] 💡 位置服務無法確定位置');
+      } else if (errorCode === 2) {
+        console.error('[LocationTask] 💡 錯誤類型: kCLErrorDenied');
+        console.error('[LocationTask] 💡 位置權限被拒絕');
+        console.error('[LocationTask] 💡 請在「設定」>「隱私權與安全性」>「定位服務」中授予權限');
+      }
+      
+      // 其他錯誤直接返回
+      return;
+    }
+    
+    // ⭐ 對於 kCLErrorDomain Code=0，不返回，繼續處理（如果 data 存在）
   }
 
   if (!data) {
@@ -104,13 +150,18 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     return; // 直接丟棄，不記錄也不畫線
   }
 
-  // 從 Store 獲取狀態（直接讀取，不透過 Hook）
+  // ⭐ 修復：使用 gpsHistoryService 檢查是否正在採集（而不是從 Store）
+  // 因為 isCollecting 不在 sessionStore 中，而是通過會話狀態來判斷
+  const isCollecting = gpsHistoryService.isSessionActive();
+  
+  // 從 Store 獲取地圖模式
   const store = useSessionStore.getState();
-  const isCollecting = store.isCollecting;
   const mapMode = store.mapMode;
   
-  // 終端日誌：顯示當前狀態
-  console.log(`[LocationTask] 📊 狀態檢查: isCollecting=${isCollecting}, mapMode=${mapMode}`);
+  // ⭐ 減少日誌頻率：只在第一次或每 20 次顯示狀態檢查
+  if (taskCount === 0 || taskCount % 20 === 0) {
+    console.log(`[LocationTask] 📊 狀態檢查: isCollecting=${isCollecting}, mapMode=${mapMode}, sessionId=${gpsHistoryService.getCurrentSessionId() || 'none'}`);
+  }
 
   // 構建位置數據對象
   const locationData = {
@@ -124,12 +175,17 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   // 邏輯閘門：只有在「採集模式」下才執行遊戲邏輯
   if (!isCollecting) {
     // 待機模式：不做任何事，直接返回（確保不記錄）
-    console.log('[LocationTask] 💤 待機模式：不執行遊戲邏輯');
+    // ⭐ 減少日誌：只在第一次顯示
+    if (taskCount === 0 || taskCount % 50 === 0) {
+      console.log('[LocationTask] 💤 待機模式：不執行遊戲邏輯');
+    }
     return;
   }
   
-  // 終端日誌：進入採集模式
-  console.log('[LocationTask] ✅ 採集模式：開始處理遊戲邏輯');
+  // ⭐ 減少日誌：只在第一次顯示進入採集模式
+  if (taskCount === 0 || taskCount % 50 === 0) {
+    console.log('[LocationTask] ✅ 採集模式：開始處理遊戲邏輯');
+  }
   
   if (gpsHistoryService.isSessionActive()) {
     // 計算距離（使用上一個位置）
@@ -153,10 +209,16 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 
     // 3. 探索者模式：檢查是否發現新區域（僅在主遊戲模式）
     if (mapMode === 'GAME' && latitude && longitude) {
-      const discoveryResult = store.discoverNewHex(latitude, longitude, 11);
-      if (discoveryResult.isNew) {
-        console.log('[LocationTask] New area discovered:', discoveryResult.hexIndex);
-        // 注意：Toast 通知需要在 UI 層處理（後台任務無法顯示 UI）
+      // ⭐ 修復：先將座標轉換為 H3 索引，然後調用 discoverNewHex
+      const h3Index = latLngToH3(latitude, longitude, H3_RESOLUTION);
+      if (h3Index) {
+        const isNew = store.discoverNewHex(h3Index);
+        if (isNew) {
+          console.log('[LocationTask] New area discovered:', h3Index);
+          // 注意：Toast 通知需要在 UI 層處理（後台任務無法顯示 UI）
+        }
+      } else {
+        console.warn('[LocationTask] Failed to convert coordinates to H3 index:', { latitude, longitude });
       }
     }
 
@@ -203,42 +265,51 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
       }
     }
 
-    // [新增] 寫入除錯日誌（只有在採集模式下）- 簡單暴力的驗證機制
-    const timeStr = new Date().toLocaleTimeString('zh-TW', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      second: '2-digit' 
-    });
-    const speedDisplay = speed && speed > 0 ? `${speed.toFixed(1)} m/s` : 'N/A';
-    const logMessage = `✅ 背景運行中 [${timeStr}] - 座標: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} - 速度: ${speedDisplay}`;
-    
-    // 終端日誌：詳細輸出（簡單暴力的驗證機制）
-    console.log(`[LocationTask] 🎯 ${logMessage}`);
-    console.log(`[LocationTask] 📍 位置: (${latitude.toFixed(6)}, ${longitude.toFixed(6)})`);
-    console.log(`[LocationTask] 🚀 速度: ${speedDisplay} | 精度: ${accuracy ? accuracy.toFixed(1) + 'm' : 'N/A'}`);
-    console.log(`[LocationTask] 📝 已記錄到 Store 和 DevDashboard`);
-    
-    store.addDebugLog(logMessage);
-
-    // [新增] 發送本地通知（讓使用者在鎖屏時知道有在跑）- 簡單暴力的驗證機制
-    try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '🎒 採集運作中',
-          body: `✅ 還在運行！ [${timeStr}] - 速度: ${speedDisplay}`,
-          sound: false, // 避免太吵，可設為 true
-          data: { timestamp: Date.now() }, // 添加時間戳數據
-        },
-        trigger: null, // 立即發送
+    // ⭐ 減少日誌頻率：只在每 5 次顯示一次詳細信息（減少日誌噪音）
+    if (taskCount % 5 === 0) {
+      const timeStr = new Date().toLocaleTimeString('zh-TW', { 
+        hour12: false, 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit' 
       });
-      console.log(`[LocationTask] 📲 通知已發送: "✅ 還在運行！ [${timeStr}]"`);
-    } catch (error) {
-      // 如果通知發送失敗，記錄但不影響主邏輯
-      console.error('[LocationTask] ❌ Failed to send notification:', error);
+      const speedDisplay = speed && speed > 0 ? `${speed.toFixed(1)} m/s` : 'N/A';
+      
+      // 終端日誌：簡化輸出（每 5 次顯示一次）
+      console.log(`[LocationTask] 🎯 背景運行中 [${timeStr}] - 座標: (${latitude.toFixed(5)}, ${longitude.toFixed(5)}) - 速度: ${speedDisplay}`);
     }
     
-    // 終端日誌：任務完成
-    console.log(`[LocationTask] ✅ 本次任務處理完成\n`);
+    // ⭐ 減少通知頻率：只在每 10 次發送一次通知（避免通知轟炸）
+    if (taskCount % 10 === 0) {
+      try {
+        const timeStr = new Date().toLocaleTimeString('zh-TW', { 
+          hour12: false, 
+          hour: '2-digit', 
+          minute: '2-digit', 
+          second: '2-digit' 
+        });
+        const speedDisplay = speed && speed > 0 ? `${speed.toFixed(1)} m/s` : 'N/A';
+        
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: '🎒 採集運作中',
+            body: `✅ 還在運行！ [${timeStr}] - 速度: ${speedDisplay}`,
+            sound: false, // 避免太吵，可設為 true
+            data: { timestamp: Date.now() }, // 添加時間戳數據
+          },
+          trigger: null, // 立即發送
+        });
+        
+        // ⭐ 減少日誌：只在每 10 次顯示一次通知發送日誌
+        if (taskCount % 50 === 0) {
+          console.log(`[LocationTask] 📲 通知已發送（每 10 次發送一次通知）`);
+        }
+      } catch (error) {
+        // 如果通知發送失敗，記錄但不影響主邏輯
+        console.error('[LocationTask] ❌ Failed to send notification:', error);
+      }
+    }
+    
+    // ⭐ 移除任務完成的日誌（減少噪音）
   }
 });

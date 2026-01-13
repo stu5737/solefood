@@ -7,11 +7,20 @@
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { calculateValue } from '../core/math/valuation';
 import type { Item } from '../types/item';
 import type { LuckGradient, DeepZoneState, PathfinderState } from '../types/game';
 import { DEEP_ZONE, ITEM_DISTRIBUTION, RESCUE_ADS } from '../utils/constants';
 import { getH3CellChildren, getH3Resolution, H3_RESOLUTION } from '../core/math/h3';
+// ⭐ 注意：不再需要手動導入 storage，persist middleware 會自動處理
+
+/**
+ * ⭐ 自動持久化 currentSessionNewHexes 的 AsyncStorage Key
+ * 防止應用重新載入時數據丟失
+ */
+const CURRENT_SESSION_HEXES_KEY = '@solefood/current-session-hexes';
 
 /**
  * 救援廣告類型
@@ -67,7 +76,9 @@ interface SessionState {
   // 新增：地圖模式
   mapMode: 'GAME' | 'HISTORY';   // 地圖模式：GAME=主遊戲探索，HISTORY=歷史軌跡
   // 新增：已探索的 H3 六邊形網格（過去7天內走過的區域）
-  exploredHexes: Set<string>;    // 已探索的 H3 索引集合
+  exploredHexes: Set<string>;    // 已探索的 H3 索引集合（歷史 + 已結算的會話）
+  currentSessionNewHexes: Set<string>; // ⭐ 當前會話新發現的 H3（採集時不顯示，結算後才合併）
+  lastKnownHex: string | null;   // ⚡️ 新增：追蹤上一個 H3 格子（用於路徑補間）
 }
 
 /**
@@ -254,7 +265,17 @@ interface SessionActions {
    * 從GPS歷史服務中獲取過去7天的所有軌跡點
    * 將這些點轉換為H3索引並存入exploredHexes
    */
-  updateExploredHexesFromHistory: () => void;
+  updateExploredHexesFromHistory: () => Promise<void>;
+  
+  /**
+   * 在停止採集時，將當前會話的新 H3 合併到 exploredHexes
+   */
+  mergeCurrentSessionHexes: () => Promise<void>;
+  
+  /**
+   * 清空當前會話的新 H3（用於取消採集時）
+   */
+  clearCurrentSessionHexes: () => void;
 }
 
 type SessionStore = SessionState & SessionActions;
@@ -322,9 +343,38 @@ const initialState: SessionState = {
   mapMode: 'GAME' as const,
   // 新增：已探索的 H3 六邊形網格（使用 Set 存儲）
   exploredHexes: new Set<string>(),
+  currentSessionNewHexes: new Set<string>(), // ⭐ 新增：當前會話新發現的 H3
+  lastKnownHex: null, // ⚡️ 新增：初始化為 null
 };
 
-export const useSessionStore = create<SessionStore>((set, get) => ({
+/**
+ * ⭐ 從 AsyncStorage 恢復 currentSessionNewHexes（防止應用重新載入時數據丟失）
+ * 
+ * 在 Store 初始化後自動調用，恢復採集過程中的臨時數據
+ */
+const restoreCurrentSessionHexes = async () => {
+  try {
+    const persistedData = await AsyncStorage.getItem(CURRENT_SESSION_HEXES_KEY);
+    if (persistedData) {
+      const hexArray = JSON.parse(persistedData) as string[];
+      const hexSet = new Set(hexArray);
+      
+      useSessionStore.setState({ 
+        currentSessionNewHexes: hexSet 
+      });
+      
+      console.log('[SessionStore] ✅ Restored currentSessionNewHexes from AsyncStorage:', hexSet.size, 'hexes');
+    } else {
+      console.log('[SessionStore] No persisted currentSessionNewHexes found');
+    }
+  } catch (error) {
+    console.warn('[SessionStore] ⚠️  Failed to restore currentSessionNewHexes:', error);
+  }
+};
+
+export const useSessionStore = create<SessionStore>()(
+  persist(
+    (set, get) => ({
   ...initialState,
 
   /**
@@ -975,36 +1025,124 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
     
     const state = get();
-    if (state.exploredHexes.has(hexIndex)) {
-      // 已經探索過
+    const { lastKnownHex, exploredHexes, currentSessionNewHexes } = state;
+    
+    // ⚡️ 如果是同一個格子，直接跳過（效能優化）
+    if (hexIndex === lastKnownHex) {
       return false;
     }
     
-    // 新發現的區域
-    const newExploredHexes = new Set(state.exploredHexes);
-    newExploredHexes.add(hexIndex);
+    const newCurrentSessionHexes = new Set(currentSessionNewHexes);
+    let hasNewDiscoveries = false;
     
-    set({ exploredHexes: newExploredHexes });
+    // ⚡️ 核心邏輯：路徑補間 (Grid Path Interpolation)
+    if (lastKnownHex) {
+      try {
+        // 動態導入 h3-js 的 gridPathCells 方法
+        const { getH3ModuleSync } = require('../core/math/h3');
+        const h3 = getH3ModuleSync();
+        
+        // 檢查是否支持 gridPathCells
+        if (h3 && typeof h3.gridPathCells === 'function') {
+          // 取得從上一格到當前格之間的所有格子
+          const pathCells = h3.gridPathCells(lastKnownHex, hexIndex);
+          
+          // 將路徑上所有格子加入
+          pathCells.forEach((cell: string) => {
+            if (!exploredHexes.has(cell) && !currentSessionNewHexes.has(cell)) {
+              newCurrentSessionHexes.add(cell);
+              hasNewDiscoveries = true;
+            }
+          });
+          
+          console.log('[SessionStore] 🎯 Path interpolation:', {
+            from: lastKnownHex,
+            to: hexIndex,
+            pathLength: pathCells.length,
+            newHexes: pathCells.filter((c: string) => !exploredHexes.has(c) && !currentSessionNewHexes.has(c)).length
+          });
+        } else {
+          // 降級方案：直接加入當前格子
+          console.log('[SessionStore] gridPathCells not available, using fallback');
+          
+          if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
+            newCurrentSessionHexes.add(hexIndex);
+            hasNewDiscoveries = true;
+          }
+        }
+      } catch (error) {
+        // 距離太遠（瞬移）或計算失敗，只加當前點
+        console.warn('[SessionStore] Grid path calculation failed, using current hex only:', error);
+        
+        if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
+          newCurrentSessionHexes.add(hexIndex);
+          hasNewDiscoveries = true;
+        }
+      }
+    } else {
+      // 第一次定位，直接加入當前格子
+      if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
+        newCurrentSessionHexes.add(hexIndex);
+        hasNewDiscoveries = true;
+      }
+    }
     
-    console.log('[SessionStore] New hex discovered:', hexIndex, 'Total explored:', newExploredHexes.size);
-    
-    return true;
+    // 只有真的有新格子才更新 State（減少渲染）
+    if (hasNewDiscoveries) {
+      set({ 
+        currentSessionNewHexes: newCurrentSessionHexes,
+        lastKnownHex: hexIndex // ⚡️ 更新最後位置
+      });
+      
+      // ⭐ 關鍵修復：立即持久化到 AsyncStorage（防止應用重新載入時數據丟失）
+      AsyncStorage.setItem(
+        CURRENT_SESSION_HEXES_KEY,
+        JSON.stringify(Array.from(newCurrentSessionHexes))
+      ).catch(err => {
+        console.warn('[SessionStore] ⚠️  Failed to persist current session hexes:', err);
+      });
+      
+      return true;
+    } else {
+      // 即使沒新格子，也要更新最後位置，以便下次計算
+      set({ lastKnownHex: hexIndex });
+      return false;
+    }
   },
   
   /**
    * 從7天歷史軌跡更新已探索的H3六邊形
    * 
+   * ⭐ 修復：確保初始化並從多個來源獲取數據，添加錯誤處理
+   * 
    * 從GPS歷史服務中獲取過去7天的所有軌跡點
    * 將這些點轉換為H3索引並存入exploredHexes
    */
-  updateExploredHexesFromHistory: () => {
+  updateExploredHexesFromHistory: async () => {
     try {
       const { gpsHistoryService } = require('../services/gpsHistory');
-      const { latLngToH3 } = require('../core/math/h3');
+      const { latLngToH3, H3_RESOLUTION } = require('../core/math/h3');
+      
+      // ⭐ 修復 1：確保 gpsHistoryService 已初始化
+      if (!gpsHistoryService.initialized) {
+        console.log('[SessionStore] ⚠️  GPSHistoryService not initialized, initializing...');
+        await gpsHistoryService.initialize();
+      }
+      
+      // ⭐ 注意：persist middleware 已經自動從存儲讀取了 exploredHexes
+      // 所以 state.exploredHexes 已經包含了持久化的數據
+      const state = get();
+      
+      // ⭐ 直接使用 state.exploredHexes（persist 已經處理了 Set 轉換）
+      const existingHexes = new Set<string>(state.exploredHexes);
+      
+      console.log('[SessionStore] 📊 Loaded from persist storage:', {
+        persistedHexesCount: state.exploredHexes.size,
+        mergedCount: existingHexes.size,
+      });
       
       // 首先檢查並遷移舊的 Res 10 數據到 Res 11
-      const state = get();
-      const oldHexes = Array.from(state.exploredHexes);
+      const oldHexes = Array.from(existingHexes);
       if (oldHexes.length > 0) {
         // 檢查是否有 Res 10 的格子需要遷移
         const res10Hexes = oldHexes.filter((hex) => {
@@ -1020,8 +1158,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         });
         
         if (res10Hexes.length > 0) {
+          const { getH3CellChildren } = require('../core/math/h3');
           console.log(`[SessionStore] Migrating ${res10Hexes.length} Res 10 hexes to Res 11...`);
-          const migratedHexes = new Set<string>(state.exploredHexes);
+          const migratedHexes = new Set<string>(existingHexes);
           
           // 將 Res 10 格子轉換為 Res 11 格子
           for (const res10Hex of res10Hexes) {
@@ -1033,32 +1172,242 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
             migratedHexes.delete(res10Hex);
           }
           
-          set({ exploredHexes: migratedHexes });
-          console.log(`[SessionStore] Migration complete. New hex count: ${migratedHexes.size}`);
+          existingHexes.clear();
+          migratedHexes.forEach(hex => existingHexes.add(hex));
+          console.log(`[SessionStore] Migration complete. New hex count: ${existingHexes.size}`);
         }
       }
       
-      // 獲取過去7天的所有GPS點
+      // ⭐ 需求 1：排除當前會話的 H3（只渲染歷史數據，不包括本次採集）
+      const currentSessionId = gpsHistoryService.getCurrentSessionId();
+      
+      // ⭐ 需求 2：從多個來源獲取歷史點（只包含已結束的會話）
+      // 1. 從 this.history 獲取（7天歷史）
       const historyPoints = gpsHistoryService.getHistoryPointsByDays(7);
       
-      // 轉換為H3索引並去重
-      const hexSet = new Set<string>(get().exploredHexes); // 從已遷移的格子開始
+      // 2. 從所有已結束的會話中獲取點（排除當前會話）
+      const allSessions = gpsHistoryService.getAllSessions();
+      const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      const sessionPoints: any[] = [];
       
-      for (const point of historyPoints) {
-        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION); // 使用新的 Res 11
-        if (h3Index) {
-          hexSet.add(h3Index);
+      for (const session of allSessions) {
+        // ⭐ 關鍵：排除當前會話
+        if (session.sessionId === currentSessionId) {
+          continue;
+        }
+        
+        // 只包含過去7天內且已結束的會話
+        if (session.startTime >= sevenDaysAgo && session.endTime) {
+          sessionPoints.push(...session.points);
+        }
+      }
+      
+      // 合併並去重（基於 timestamp + lat + lng）
+      const allPoints = [...historyPoints, ...sessionPoints];
+      const uniquePoints = new Map<string, any>();
+      
+      for (const point of allPoints) {
+        const key = `${point.timestamp}_${point.latitude.toFixed(6)}_${point.longitude.toFixed(6)}`;
+        if (!uniquePoints.has(key)) {
+          uniquePoints.set(key, point);
+        }
+      }
+      
+      console.log('[SessionStore] 📊 Total unique points:', uniquePoints.size, {
+        fromHistory: historyPoints.length,
+        fromSessions: sessionPoints.length,
+      });
+      
+      // ⭐ 修復 3：轉換為H3索引並去重，添加路徑補間邏輯
+      // ⭐ 關鍵修復：從 existingHexes 開始，而不是空 Set
+      const hexSet = new Set<string>(existingHexes);
+      let successCount = 0;
+      let failCount = 0;
+      let interpolatedCount = 0;
+      let lastHex: string | null = null; // ⚡️ 追蹤上一個格子，用於路徑補間
+      
+      // ⚡️ 動態導入 H3 模組以使用 gridPathCells
+      const h3Utils = require('../core/math/h3');
+      const h3Module = h3Utils.getH3ModuleSync();
+      const hasGridPathCells = h3Module && typeof h3Module.gridPathCells === 'function';
+      
+      // ⚡️ 將 uniquePoints 轉換為陣列並按時間排序，確保路徑順序正確
+      const sortedPoints = Array.from(uniquePoints.values()).sort((a, b) => a.timestamp - b.timestamp);
+      
+      for (const point of sortedPoints) {
+        try {
+          // 驗證座標有效性
+          if (!isFinite(point.latitude) || !isFinite(point.longitude) ||
+              Math.abs(point.latitude) > 90 || Math.abs(point.longitude) > 180) {
+            failCount++;
+            continue;
+          }
+          
+          const currentHex = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+          if (currentHex && currentHex.length > 0) {
+            // ⚡️ 如果有上一個格子且與當前格子不同，嘗試路徑補間
+            if (lastHex && lastHex !== currentHex && hasGridPathCells) {
+              try {
+                // 填補中間的格子
+                const pathCells = h3Module.gridPathCells(lastHex, currentHex);
+                pathCells.forEach((cell: string) => {
+                  hexSet.add(cell);
+                  interpolatedCount++;
+                });
+                successCount++;
+              } catch (error) {
+                // 距離太遠（瞬移）或計算失敗，只加當前格子
+                hexSet.add(currentHex);
+                successCount++;
+              }
+            } else {
+              // 第一個點、相同格子或無法使用路徑補間
+              hexSet.add(currentHex);
+              successCount++;
+            }
+            
+            lastHex = currentHex; // 更新最後一個格子
+          } else {
+            failCount++;
+            if (failCount <= 5) { // 只記錄前5個失敗案例，避免日誌過多
+              console.warn('[SessionStore] ⚠️  Failed to convert point to H3:', {
+                lat: point.latitude,
+                lng: point.longitude,
+                timestamp: point.timestamp,
+              });
+            }
+          }
+        } catch (error) {
+          failCount++;
+          if (failCount <= 5) {
+            console.warn('[SessionStore] ⚠️  Error converting point to H3:', error, point);
+          }
         }
       }
       
       set({ exploredHexes: hexSet });
       
-      console.log('[SessionStore] Explored hexes updated from history', {
-        historyPointsCount: historyPoints.length,
+      // ⭐ 關鍵修復：手動觸發 persist 保存（確保數據寫入）
+      // persist middleware 會自動處理，但我們強制觸發一次狀態更新確保保存
+      useSessionStore.setState({ exploredHexes: hexSet });
+      
+      console.log('[SessionStore] ✅ Static H3 hexagons loaded and saved (excluding current session)', {
+        totalPoints: uniquePoints.size,
+        successCount,
+        failCount,
+        interpolatedCount,
         exploredHexesCount: hexSet.size,
+        persistedHexesCount: state.exploredHexes.size,
+        currentSessionExcluded: currentSessionId ? 'yes' : 'no',
+        pathInterpolationEnabled: hasGridPathCells,
       });
     } catch (error) {
-      console.error('[SessionStore] Failed to update explored hexes from history:', error);
+      console.error('[SessionStore] ❌ Failed to update explored hexes from history:', error);
     }
   },
-}));
+  
+  /**
+   * 在停止採集時，將當前會話的新 H3 合併到 exploredHexes
+   */
+  mergeCurrentSessionHexes: async () => {
+    const state = get();
+    const newHexesCount = state.currentSessionNewHexes.size;
+    
+    if (newHexesCount === 0) {
+      console.log('[SessionStore] No new hexes to merge');
+      
+      // ⭐ 即使沒有新 H3，也要清除持久化數據（清理垃圾數據）
+      try {
+        await AsyncStorage.removeItem(CURRENT_SESSION_HEXES_KEY);
+        console.log('[SessionStore] ✅ Cleared persisted current session hexes (no new hexes)');
+      } catch (error) {
+        console.warn('[SessionStore] ⚠️  Failed to clear persisted hexes:', error);
+      }
+      
+      return;
+    }
+    
+    const beforeSize = state.exploredHexes.size;
+    const mergedHexes = new Set(state.exploredHexes);
+    state.currentSessionNewHexes.forEach(hex => mergedHexes.add(hex));
+    const afterSize = mergedHexes.size;
+    
+    console.log(`[SessionStore] 🔄 Merging ${newHexesCount} hexes. Before: ${beforeSize}, After: ${afterSize}, Actually added: ${afterSize - beforeSize}`);
+    
+    // ⭐ 單次原子更新，避免中間狀態
+    set({ 
+      exploredHexes: mergedHexes,
+      currentSessionNewHexes: new Set<string>(), // 清空當前會話的新 H3
+      lastKnownHex: null, // 重置最後已知位置
+    });
+    
+    // ⭐ 清除 AsyncStorage 中的臨時持久化數據
+    try {
+      await AsyncStorage.removeItem(CURRENT_SESSION_HEXES_KEY);
+      console.log('[SessionStore] ✅ Cleared persisted current session hexes');
+    } catch (error) {
+      console.warn('[SessionStore] ⚠️  Failed to clear persisted hexes:', error);
+    }
+    
+    // ⭐ 短暫延遲確保 React 完成更新
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    console.log(`[SessionStore] ✅ Merge completed. Total explored: ${mergedHexes.size}`);
+  },
+  
+  /**
+   * 清空當前會話的新 H3（用於取消採集時）
+   */
+  clearCurrentSessionHexes: () => {
+    const state = get();
+    if (state.currentSessionNewHexes.size > 0) {
+      console.log('[SessionStore] Clearing', state.currentSessionNewHexes.size, 'current session new hexes');
+      set({ currentSessionNewHexes: new Set<string>() });
+    }
+  },
+    }),
+    {
+      name: 'solefood-session-storage', // 存儲鍵名
+      
+      // ⭐ 關鍵：自定義 storage 來處理 Set
+      storage: createJSONStorage(() => AsyncStorage, {
+        reviver: (key, value) => {
+          // 讀檔時：如果看到 exploredHexes 或 currentSessionNewHexes，轉回 Set
+          if (key === 'exploredHexes' || key === 'currentSessionNewHexes') {
+            return value && Array.isArray(value) ? new Set(value) : new Set<string>();
+          }
+          return value;
+        },
+        replacer: (key, value) => {
+          // 存檔時：如果值是 Set，轉成 Array
+          if (value instanceof Set) {
+            return Array.from(value);
+          }
+          return value;
+        },
+      }),
+      
+      // ⭐ 只持久化需要的字段（避免存儲過大的數據）
+      partialize: (state) => ({
+        exploredHexes: state.exploredHexes, // 只持久化 exploredHexes
+        // 如果需要持久化其他字段，可以在這裡添加
+        // 例如：totalDistance, estimatedValue 等
+      }),
+      
+      // ⭐ 新增：監聽 hydration 完成
+      onRehydrateStorage: () => (state) => {
+        console.log('[SessionStore] ✅ Hydration completed', {
+          exploredHexesCount: state?.exploredHexes.size || 0,
+        });
+        
+        // ⭐ Hydration 完成後，立即恢復 currentSessionNewHexes
+        restoreCurrentSessionHexes();
+      },
+    }
+  )
+);
+
+// ⭐ 自動在 Store 初始化時恢復 currentSessionNewHexes（防止應用重新載入時數據丟失）
+// 如果 persist middleware 尚未完成 hydration，這裡會先執行一次
+// 然後 onRehydrateStorage 會在 hydration 完成後再執行一次（雙保險）
+restoreCurrentSessionHexes();

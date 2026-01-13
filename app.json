@@ -11,9 +11,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
-          "locationAlwaysPermission": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
-          "locationWhenInUsePermission": "此應用需要位置權限，以記錄您的 GPS 軌跡。",
+          "locationAlwaysAndWhenInUsePermission": "為了在您走路時持續記錄 GPS 軌跡，我們需要「總是允許」位置權限。即使您關閉螢幕或切換到其他 App，我們也會繼續記錄您的位置。",
+          "locationAlwaysPermission": "為了在背景記錄您的運動軌跡，我們需要「總是允許」位置權限。",
+          "locationWhenInUsePermission": "為了記錄您的 GPS 軌跡和探索地圖，我們需要位置權限。",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
@@ -27,10 +27,16 @@
       "bundleIdentifier": "com.solefood.mvp",
       "infoPlist": {
         "UIBackgroundModes": ["location", "fetch"],
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
-        "NSLocationAlwaysUsageDescription": "此應用需要背景定位權限，以在您走路時持續記錄 GPS 軌跡。",
-        "NSLocationWhenInUseUsageDescription": "此應用需要位置權限，以記錄您的 GPS 軌跡。"
-      }
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "為了在您走路時持續記錄 GPS 軌跡，我們需要「總是允許」位置權限。即使您關閉螢幕或切換到其他 App，我們也會繼續記錄您的位置。",
+        "NSLocationAlwaysUsageDescription": "為了在背景記錄您的運動軌跡，我們需要「總是允許」位置權限。",
+        "NSLocationWhenInUseUsageDescription": "為了記錄您的 GPS 軌跡和探索地圖，我們需要位置權限。",
+        "NSLocationUsageDescription": "此應用需要位置權限，以記錄您的 GPS 軌跡。",
+        "NSLocationTemporaryUsageDescriptionDictionary": {
+          "purpose": "記錄您的運動軌跡"
+        }
+      },
+      "usesLocationServices": true,
+      "supportsTablet": false
     },
     "android": {
       "package": "com.solefood.mvp",

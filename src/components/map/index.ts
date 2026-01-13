@@ -5,3 +5,4 @@
 
 export { ExplorationMap } from './ExplorationMap';
 export { RealTimeMap } from './RealTimeMap';
+export { default as LivePath } from './LivePath';

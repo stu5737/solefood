@@ -10,11 +10,19 @@
 let h3Module: any = null;
 let h3LoadAttempted: boolean = false;
 
+// ⭐ H3 解析度對應的實際邊長（度）
+// 基於 H3 官方規格：Resolution 11 的六邊形邊長約 25 米 = 0.000225 度（在赤道附近）
+const H3_EDGE_LENGTH_DEGREES: Record<number, number> = {
+  9: 0.001,     // ~111m
+  10: 0.0005,   // ~55m
+  11: 0.000225, // ~25m (實際值，符合 H3 Res 11 規格)
+  12: 0.0001,   // ~11m
+};
+
 // 降級實現（當 h3-js 無法加載時使用）
 const fallbackH3Module = {
   latLngToCell: (lat: number, lng: number, res: number) => {
-    // 簡單的網格 ID 生成（基於座標的哈希）
-    // 這不是真正的 H3，但可以作為臨時替代方案
+    // ⭐ 改進：使用統一的網格原點，確保相鄰格子對齊
     const gridSize = Math.pow(10, res);
     const latGrid = Math.floor((lat + 90) * gridSize);
     const lngGrid = Math.floor((lng + 180) * gridSize);
@@ -33,26 +41,108 @@ const fallbackH3Module = {
     return [0, 0];
   },
   cellToBoundary: (h3Index: string) => {
-    // 降級實現：從 H3 ID 解析中心點並創建一個簡單的六邊形
+    // ⭐ 添加空值檢查
+    if (!h3Index || typeof h3Index !== 'string') {
+      console.warn('[H3] Invalid h3Index:', h3Index);
+      return [];
+    }
+    
+    // ⭐ 需求 2：改進六邊形邊界計算，確保邊接邊對齊（像蜂巢一樣）
     const parts = h3Index.split('_');
     if (parts.length === 4 && parts[0] === 'fallback') {
       const res = parseInt(parts[1]);
       const gridSize = Math.pow(10, res);
-      const lat = (parseInt(parts[2]) / gridSize) - 90;
-      const lng = (parseInt(parts[3]) / gridSize) - 180;
       
-      // 根據解析度調整六邊形大小
-      const size = res >= 11 ? 0.0006 : res >= 10 ? 0.0012 : res >= 9 ? 0.0025 : 0.005;
+      // ⭐ 關鍵改進：使用網格中心點（確保相鄰格子完美對齊）
+      const latGrid = parseInt(parts[2]);
+      const lngGrid = parseInt(parts[3]);
+      
+      // 計算網格中心點（而不是解析的座標）
+      const lat = (latGrid + 0.5) / gridSize - 90;
+      const lng = (lngGrid + 0.5) / gridSize - 180;
+      
+      // ⭐ 修復：使用實際的 H3 邊長，而不是計算的 cellSize
+      // H3 Resolution 11 的六邊形邊長約 25 米 = 0.000225 度
+      // 如果沒有對應的邊長，則根據解析度計算（每降低一級，邊長增加約 2 倍）
+      const edgeLength = H3_EDGE_LENGTH_DEGREES[res] || (0.000225 / Math.pow(2, 11 - res));
+      
+      // 正六邊形：外接圓半徑 = 邊長
+      const radius = edgeLength;
+      
+      // ⭐ 調試：記錄計算結果（修復後）
+      if (Math.abs(latGrid) < 2 && Math.abs(lngGrid) < 2) {
+        const cellSize = 1 / gridSize;
+        console.log('[H3] 🔍 Hexagon calculation (FIXED):', {
+          res,
+          gridSize,
+          cellSize: cellSize.toFixed(12),
+          edgeLength: edgeLength.toFixed(8),
+          radius: radius.toFixed(8),
+          lat: lat.toFixed(6),
+          lng: lng.toFixed(6),
+          latGrid,
+          lngGrid,
+        });
+      }
+      
+      // ⭐ 改進：使用正確的起始角度（確保六邊形方向一致）
+      // H3 六邊形通常從 30 度開始，讓六邊形有一個頂點向上
+      const startAngle = Math.PI / 6; // 30 度
       
       // 創建六邊形（6個頂點）
       const angleStep = (2 * Math.PI) / 6;
       const boundary: Array<[number, number]> = [];
+      
       for (let i = 0; i < 6; i++) {
-        const angle = i * angleStep;
-        const latOffset = size * Math.cos(angle);
-        const lngOffset = size * Math.sin(angle) / Math.cos(lat * Math.PI / 180);
-        boundary.push([lat + latOffset, lng + lngOffset]);
+        const angle = startAngle + i * angleStep;
+        
+        // ⭐ 關鍵：考慮緯度對經度的影響（確保在不同緯度下六邊形大小一致）
+        const latOffset = radius * Math.cos(angle);
+        const lngOffset = radius * Math.sin(angle) / Math.cos(lat * Math.PI / 180);
+        
+        const finalLat = lat + latOffset;
+        const finalLng = lng + lngOffset;
+        
+        // ⭐ 調試：驗證邊界點
+        if (!isFinite(finalLat) || !isFinite(finalLng)) {
+          console.warn('[H3] ⚠️  Invalid boundary point:', {
+            i,
+            angle,
+            latOffset,
+            lngOffset,
+            finalLat,
+            finalLng,
+            lat,
+            lng,
+          });
+        }
+        
+        boundary.push([finalLat, finalLng]);
       }
+      
+      // ⭐ 調試：記錄前幾個六邊形的完整邊界（修復後）
+      if (Math.abs(latGrid) < 2 && Math.abs(lngGrid) < 2) {
+        const minLat = Math.min(...boundary.map(([lat]) => lat));
+        const maxLat = Math.max(...boundary.map(([lat]) => lat));
+        const minLng = Math.min(...boundary.map(([, lng]) => lng));
+        const maxLng = Math.max(...boundary.map(([, lng]) => lng));
+        
+        console.log('[H3] 🔍 Hexagon boundary (FIXED):', {
+          h3Index,
+          center: { lat: lat.toFixed(6), lng: lng.toFixed(6) },
+          radius: radius.toFixed(8),
+          edgeLength: edgeLength.toFixed(8),
+          bounds: {
+            latRange: `${minLat.toFixed(6)} to ${maxLat.toFixed(6)} (${(maxLat - minLat).toFixed(8)} deg)`,
+            lngRange: `${minLng.toFixed(6)} to ${maxLng.toFixed(6)} (${(maxLng - minLng).toFixed(8)} deg)`,
+          },
+          boundary: boundary.map(([lat, lng]) => ({
+            lat: lat.toFixed(6),
+            lng: lng.toFixed(6),
+          })),
+        });
+      }
+      
       return boundary;
     }
     return [];
@@ -124,7 +214,7 @@ async function getH3Module() {
 
 // 同步版本的導入（用於非異步場景）
 // 在 React Native 中，我們直接使用降級實現，避免 require 導致的編碼錯誤
-function getH3ModuleSync() {
+export function getH3ModuleSync() {
   // 如果已經成功加載，返回已加載的模組
   if (h3Module && h3Module !== fallbackH3Module) {
     return h3Module;
@@ -200,12 +290,27 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
   try {
     const h3 = getH3ModuleSync();
     if (!h3 || !h3.cellToLatLng) {
+      // ⭐ 降級方案：如果 h3-js 不可用，使用 fallback 實現
+      if (h3Index && h3Index.startsWith('fallback_')) {
+        const [lat, lng] = fallbackH3Module.cellToLatLng(h3Index);
+        return { latitude: lat, longitude: lng };
+      }
       console.warn('[H3] h3-js module not available');
       return null;
     }
     const [lat, lng] = h3.cellToLatLng(h3Index);
     return { latitude: lat, longitude: lng };
   } catch (error) {
+    // ⭐ 降級方案：發生錯誤時，嘗試使用 fallback 實現
+    if (h3Index && h3Index.startsWith('fallback_')) {
+      try {
+        const [lat, lng] = fallbackH3Module.cellToLatLng(h3Index);
+        return { latitude: lat, longitude: lng };
+      } catch (fallbackError) {
+        console.error('[H3] Fallback also failed:', fallbackError);
+        return null;
+      }
+    }
     console.error('[H3] Failed to convert H3 to lat/lng:', error);
     return null;
   }
@@ -218,6 +323,12 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
  * @returns 邊界座標陣列 [[lat, lng], ...]
  */
 export function getH3CellBoundary(h3Index: string): Array<[number, number]> {
+  // ⭐ 添加空值檢查
+  if (!h3Index || typeof h3Index !== 'string') {
+    console.warn('[H3] Invalid h3Index provided to getH3CellBoundary:', h3Index);
+    return [];
+  }
+  
   try {
     const h3 = getH3ModuleSync();
     if (!h3 || !h3.cellToBoundary) {
@@ -274,5 +385,56 @@ export function isValidH3Index(h3Index: string): boolean {
     return true;
   } catch (error) {
     return false;
+  }
+}
+
+/**
+ * 計算兩個 H3 格子之間的路徑（填補中間的格子）
+ * 使用 H3 的 gridPathCells 方法
+ * 
+ * @param startHex 起始 H3 索引
+ * @param endHex 結束 H3 索引
+ * @returns 路徑上所有 H3 格子的陣列（包含起點和終點）
+ */
+export function getH3GridPath(
+  startHex: string,
+  endHex: string
+): string[] {
+  try {
+    const h3 = getH3ModuleSync();
+    
+    // 檢查是否支持 gridPathCells
+    if (h3 && typeof h3.gridPathCells === 'function') {
+      return h3.gridPathCells(startHex, endHex);
+    }
+    
+    // 降級方案：返回起點和終點
+    console.warn('[H3] gridPathCells not available, using fallback');
+    return [startHex, endHex];
+  } catch (error) {
+    // 距離太遠或計算失敗
+    console.error('[H3] Grid path calculation failed:', error);
+    return [startHex, endHex];
+  }
+}
+
+/**
+ * 獲取 H3 格子的子格子（用於分辨率轉換）
+ */
+export function getH3CellChildren(h3Index: string, childResolution: number): string[] {
+  try {
+    const h3 = getH3ModuleSync();
+    
+    // 使用 fallbackH3Module 的 cellToChildren 方法
+    if (h3 && typeof h3.cellToChildren === 'function') {
+      return h3.cellToChildren(h3Index, childResolution);
+    }
+    
+    // 降級方案：返回原格子
+    console.warn('[H3] cellToChildren not available, using fallback');
+    return [h3Index];
+  } catch (error) {
+    console.error('[H3] Cell children calculation failed:', error);
+    return [h3Index];
   }
 }

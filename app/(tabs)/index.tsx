@@ -28,6 +28,7 @@ import { locationService } from '../../src/services/location';
 import { gpsHistoryService } from '../../src/services/gpsHistory';
 import { explorationService } from '../../src/services/exploration';
 import { bgTrackingNotification } from '../../src/services/backgroundTrackingNotification';
+import { backgroundLocationService } from '../../src/services/BackgroundLocationService';
 import { entropyEngine } from '../../src/core/entropy/engine';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import type { CollectionSession } from '../../src/services/gpsHistory';
@@ -62,8 +63,35 @@ export default function GameScreen() {
         await explorationService.initialize();
         await gpsHistoryService.initialize();
         
-        // 初始化時更新已探索的 H3 六邊形（從7天歷史軌跡）
-        updateExploredHexesFromHistory();
+        // ⭐ 新增：診斷日誌
+        const historyCount = gpsHistoryService.getHistoryCount();
+        const sessions = gpsHistoryService.getAllSessions();
+        console.log('[GameScreen] 📊 GPS History Status:', {
+          historyPoints: historyCount,
+          sessions: sessions.length,
+        });
+        
+        // ⭐ 關鍵修復：等待 GPS 歷史完全載入後再更新 H3
+        // 給一個短暫延遲，確保數據完全載入
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // ⭐ 關鍵修復：強制更新 exploredHexes（確保從歷史數據生成）
+        console.log('[GameScreen] 🔄 Updating exploredHexes from history...');
+        await updateExploredHexesFromHistory();
+        
+        // 再次檢查 exploredHexes
+        const store = useSessionStore.getState();
+        console.log('[GameScreen] 📊 After updateExploredHexesFromHistory:', {
+          exploredHexesCount: store.exploredHexes.size,
+        });
+        
+        // ⭐ 新增：強制保存一次，確保數據同步
+        try {
+          await gpsHistoryService.forceSave();
+          console.log('[GameScreen] ✅ Force save completed after initialization');
+        } catch (error) {
+          console.error('[GameScreen] ❌ Force save failed after initialization:', error);
+        }
         
         // 請求位置權限並獲取當前位置
         const hasPermission = await locationService.checkPermissions();
@@ -84,8 +112,7 @@ export default function GameScreen() {
           // 繼續執行，因為 watchPositionAsync 會持續獲取位置
         }
         
-        // 載入所有歷史會話
-        const sessions = gpsHistoryService.getAllSessions();
+        // ⭐ 修復：使用已經聲明的 sessions 變數，避免重複聲明
         setAllSessions(sessions);
         
         setIsReady(true);
@@ -101,8 +128,11 @@ export default function GameScreen() {
     return () => {
       if (gpsHistoryService.isSessionActive()) {
         console.warn('[GameScreen] Component unmounting with active session, ending session...');
-        gpsHistoryService.endSession('picnic'); // 默認使用 picic 結束
-        gpsHistoryService.forceSave(); // 強制保存
+        // ⭐ 注意：清理函數不能是 async，所以使用立即執行的 async 函數
+        (async () => {
+          await gpsHistoryService.endSession('picnic'); // 默認使用 picnic 結束
+          gpsHistoryService.forceSave(); // 強制保存
+        })();
       }
     };
   }, []);
@@ -170,21 +200,38 @@ export default function GameScreen() {
         <>
           <SimulatorMode
             isCollecting={isCollecting}
-            onStartCollection={() => {
-              const sessionId = gpsHistoryService.startSession();
+            onStartCollection={async () => {
+              // ⭐ 清空之前會話的新 H3（如果有的話）
+              const { useSessionStore } = require('../../src/stores/sessionStore');
+              const store = useSessionStore.getState();
+              if (store.clearCurrentSessionHexes) {
+                store.clearCurrentSessionHexes();
+              }
+              
+              const sessionId = await gpsHistoryService.startSession();
               console.log('[GameScreen] Started collection session (simulator):', sessionId);
               setIsCollecting(true);
               // 啟動背景定位通知
               bgTrackingNotification.startTracking();
+              // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
+              backgroundLocationService.startBackgroundTracking().then((success) => {
+                if (success) {
+                  console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
+                } else {
+                  console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
+                }
+              });
             }}
-            onEndCollection={(type) => {
-              gpsHistoryService.endSession(type);
+            onEndCollection={async (type) => {
+              await gpsHistoryService.endSession(type);
               setIsCollecting(false);
               const sessions = gpsHistoryService.getAllSessions();
               setAllSessions(sessions);
               console.log(`[GameScreen] Ended collection session (simulator): ${type}`);
               // 停止背景定位通知
               bgTrackingNotification.stopTracking();
+              // ⭐ 關鍵：停止背景位置追蹤任務
+              backgroundLocationService.stopBackgroundTracking();
             }}
           />
           
@@ -252,14 +299,16 @@ export default function GameScreen() {
                       useNativeDriver: true,
                     }).start();
                   }}
-                  onPress={() => {
-                    gpsHistoryService.endSession('unload');
+                  onPress={async () => {
+                    await gpsHistoryService.endSession('unload');
                     setIsCollecting(false);
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session: unload');
                     // 停止背景定位通知
                     bgTrackingNotification.stopTracking();
+                    // ⭐ 關鍵：停止背景位置追蹤任務
+                    backgroundLocationService.stopBackgroundTracking();
                   }}
                 >
                   <Ionicons name="car-outline" size={24} color="#FFFFFF" />
@@ -282,14 +331,16 @@ export default function GameScreen() {
                       useNativeDriver: true,
                     }).start();
                   }}
-                  onPress={() => {
-                    gpsHistoryService.endSession('picnic');
+                  onPress={async () => {
+                    await gpsHistoryService.endSession('picnic');
                     setIsCollecting(false);
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session: picnic');
                     // 停止背景定位通知
                     bgTrackingNotification.stopTracking();
+                    // ⭐ 關鍵：停止背景位置追蹤任務
+                    backgroundLocationService.stopBackgroundTracking();
                   }}
                 >
                   <Ionicons name="restaurant-outline" size={24} color="#FFFFFF" />
@@ -318,13 +369,51 @@ export default function GameScreen() {
                   useNativeDriver: true,
                 }).start();
               }}
-              onPress={() => {
+              onPress={async () => {
                 if (!isCollecting) {
-                  const sessionId = gpsHistoryService.startSession();
+                  // ⭐ 清空之前會話的新 H3（如果有的話）
+                  const { useSessionStore } = require('../../src/stores/sessionStore');
+                  const store = useSessionStore.getState();
+                  if (store.clearCurrentSessionHexes) {
+                    store.clearCurrentSessionHexes();
+                  }
+                  
+                  const sessionId = await gpsHistoryService.startSession();
                   console.log('[GameScreen] Started collection session:', sessionId);
                   setIsCollecting(true);
                   // 啟動背景定位通知
                   bgTrackingNotification.startTracking();
+                  // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
+                  backgroundLocationService.startBackgroundTracking().then((success) => {
+                    if (success) {
+                      console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
+                    } else {
+                      console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
+                    }
+                  });
+                } else {
+                  // ⭐ 防崩潰修復：停止採集時的強制重置
+                  console.log('[GameScreen] 🧹 開始清理採集資源...');
+                  
+                  // 1. 停止背景位置追蹤任務（優先停止，避免繼續產生事件）
+                  backgroundLocationService.stopBackgroundTracking().then(() => {
+                    console.log('[GameScreen] ✅ 背景位置追蹤任務已停止');
+                  }).catch((error) => {
+                    console.warn('[GameScreen] ⚠️  停止背景位置追蹤任務時出錯:', error);
+                  });
+                  
+                  // 2. 停止背景定位通知
+                  bgTrackingNotification.stopTracking();
+                  
+                  // 3. 結束會話（會自動清理會話數據）
+                  await gpsHistoryService.endSession('manual');
+                  
+                  // 4. 更新狀態
+                  setIsCollecting(false);
+                  const sessions = gpsHistoryService.getAllSessions();
+                  setAllSessions(sessions);
+                  
+                  console.log('[GameScreen] ✅ 採集資源清理完成');
                 }
               }}
             >
@@ -345,12 +434,27 @@ export default function GameScreen() {
             {!isCollecting ? (
           <TouchableOpacity
                 style={[styles.actionButton, styles.startButton]}
-                onPress={() => {
-                  const sessionId = gpsHistoryService.startSession();
+                onPress={async () => {
+                  // ⭐ 清空之前會話的新 H3（如果有的話）
+                  const { useSessionStore } = require('../../src/stores/sessionStore');
+                  const store = useSessionStore.getState();
+                  if (store.clearCurrentSessionHexes) {
+                    store.clearCurrentSessionHexes();
+                  }
+                  
+                  const sessionId = await gpsHistoryService.startSession();
                   console.log('[GameScreen] Started collection session (simulator):', sessionId);
                   setIsCollecting(true);
                   // 啟動背景定位通知
                   bgTrackingNotification.startTracking();
+                  // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
+                  backgroundLocationService.startBackgroundTracking().then((success) => {
+                    if (success) {
+                      console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
+                    } else {
+                      console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
+                    }
+                  });
                 }}
               >
                 <Text style={styles.buttonText}>▶ 開始採集</Text>
@@ -359,28 +463,32 @@ export default function GameScreen() {
               <View style={styles.endButtonContainer}>
           <TouchableOpacity
                   style={[styles.actionButton, styles.endButton, styles.picnicButton]}
-                  onPress={() => {
-                    gpsHistoryService.endSession('picnic');
+                  onPress={async () => {
+                    await gpsHistoryService.endSession('picnic');
                     setIsCollecting(false);
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session (simulator): picnic');
                     // 停止背景定位通知
                     bgTrackingNotification.stopTracking();
+                    // ⭐ 關鍵：停止背景位置追蹤任務
+                    backgroundLocationService.stopBackgroundTracking();
                   }}
                 >
                   <Text style={styles.buttonText}>🍽️ 就地野餐</Text>
           </TouchableOpacity>
           <TouchableOpacity
                   style={[styles.actionButton, styles.endButton, styles.unloadButton]}
-                  onPress={() => {
-                    gpsHistoryService.endSession('unload');
+                  onPress={async () => {
+                    await gpsHistoryService.endSession('unload');
                     setIsCollecting(false);
                     const sessions = gpsHistoryService.getAllSessions();
                     setAllSessions(sessions);
                     console.log('[GameScreen] Ended collection session (simulator): unload');
                     // 停止背景定位通知
                     bgTrackingNotification.stopTracking();
+                    // ⭐ 關鍵：停止背景位置追蹤任務
+                    backgroundLocationService.stopBackgroundTracking();
                   }}
                 >
                   <Text style={styles.buttonText}>🏪 餐廳卸貨</Text>
