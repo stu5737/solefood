@@ -11,10 +11,11 @@ import MapView, { Marker, Polyline, Region, Polygon, Geojson } from 'react-nativ
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { locationService } from '../../services/location';
-import { gpsHistoryService } from '../../services/gpsHistory';
+import { gpsHistoryService, CollectionSession, GPSHistoryPoint } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
 import { latLngToH3, H3_RESOLUTION, getH3CellBoundary, h3ToLatLng } from '../../core/math/h3';
+import { gridPathCells } from '../../core/math/h3';
 import { useSessionStore } from '../../stores/sessionStore';
 import { UserMarker } from './UserMarker';
 import LivePath from './LivePath';
@@ -26,6 +27,24 @@ import type { MovementInput } from '../../core/entropy/events';
 const DEFAULT_ZOOM_DELTA = {
   latitudeDelta: 0.002, // 非常近，約 200~300 公尺範圍，適合看清楚 H3 格子
   longitudeDelta: 0.002 * (Dimensions.get('window').width / Dimensions.get('window').height), // 根據螢幕長寬比自動計算
+};
+
+// 🎨 Solefood 配色方案：自然探索系（方案 A）
+// 品牌理念：步行（綠色自然）+ 食物（橙色活力）+ 探索（層次漸變）
+const SOLEFOOD_COLORS = {
+  // 歷史探索區域（深森林綠 - 已探索的領地，像地圖上的已知區域）
+  HISTORY_H3_FILL: 'rgba(34, 139, 34, 0.15)',      // Forest Green, 15% 透明度
+  HISTORY_H3_STROKE: 'rgba(34, 139, 34, 0)',       // 無邊框
+  
+  // 當前探索區域（活力薄荷綠 - 正在探索，充滿活力）
+  REALTIME_H3_FILL: 'rgba(52, 199, 89, 0.35)',     // iOS 綠色, 35% 透明度
+  REALTIME_H3_STROKE: 'rgba(52, 199, 89, 0.5)',    // 半透明綠色邊框
+  
+  // 當前移動軌跡（活力橙 - 移動的熱情，STEPN 風格）
+  REALTIME_GPS: 'rgba(255, 149, 0, 0.9)',          // iOS 橙色, 90% 透明度
+  
+  // 用戶標記（Google 藍 - 信任、定位、自我）
+  USER_MARKER: '#4285F4',
 };
 
 interface RealTimeMapProps {
@@ -86,6 +105,10 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   const [isHydrated, setIsHydrated] = useState(false);
   // ⭐⭐ 修復 4: 強制卸載 LivePath 的狀態（防止多次採集循環後的 GPS 軌跡殘留）
   const [forceUnmountLivePath, setForceUnmountLivePath] = useState(false);
+  // ⭐⭐ 智能清理：獨立的深度清理觸發器（降低閃爍頻率）
+  const [h3DeepCleanTrigger, setH3DeepCleanTrigger] = useState(0);
+  // ⭐⭐⭐ 徹底修復：為每個會話單獨渲染 H3（就像 GPS 軌跡一樣）
+  const [historySessions, setHistorySessions] = useState<CollectionSession[]>([]);
   // ⭐ Android 修復：增加 mapReady 狀態鎖
   const [isMapReady, setIsMapReady] = useState(false);
   // ⭐ Android 修復：追蹤是否已經執行過初次聚焦
@@ -100,6 +123,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   
   // Null Guard：保存上一次有效的 location（防止 Marker 消失）
   const lastValidLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  
+  // ⭐⭐ 智能清理：追蹤採集次數（每 5 次執行一次深度清理）
+  const collectionCountRef = useRef(0);
   
   // 穩定的 coordinate 對象（使用 ref 避免每次 render 都創建新對象）
   const stableCoordinateRef = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -178,6 +204,86 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
 
     return coords;
   }, []);
+
+  // ⭐⭐⭐ 徹底修復：從 GPS points 計算會話的 H3 GeoJSON（就像 GPS 軌跡一樣）
+  const calculateSessionH3GeoJson = useCallback((points: GPSHistoryPoint[]) => {
+    if (!points || points.length === 0) {
+      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No points');
+      return null;
+    }
+
+    const CIRCLE_RADIUS_METERS = 20; // ⭐ 統一為 20m，與實時 H3 一致
+    const hexes = new Set<string>();
+    
+    // 為每個 GPS 點生成 H3
+    points.forEach(point => {
+      try {
+        const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+        hexes.add(h3Index);
+      } catch (error) {
+        console.warn('[RealTimeMap] Failed to convert point to H3:', error);
+      }
+    });
+    
+    // 路徑插值：填補相鄰點之間的 H3（確保連續）
+    for (let i = 0; i < points.length - 1; i++) {
+      try {
+        const h3Start = latLngToH3(points[i].latitude, points[i].longitude, H3_RESOLUTION);
+        const h3End = latLngToH3(points[i + 1].latitude, points[i + 1].longitude, H3_RESOLUTION);
+        const gridPath = gridPathCells(h3Start, h3End);
+        gridPath.forEach(hex => hexes.add(hex));
+      } catch (error) {
+        console.warn('[RealTimeMap] Failed to interpolate H3 path:', error);
+      }
+    }
+    
+    if (hexes.size === 0) {
+      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No hexes generated');
+      return null;
+    }
+    
+    console.log('[RealTimeMap] 🎨 Calculating GeoJSON for', hexes.size, 'H3 hexes');
+    
+    // 轉換為 GeoJSON（複用現有的 getLowPolyCircle 邏輯）
+    const multiPolygonCoordinates: number[][][][] = [];
+    hexes.forEach(h3Index => {
+      try {
+        // ⭐⭐ 關鍵修復：h3ToLatLng 返回對象 { latitude, longitude }，不是數組 [lat, lng]
+        const coord = h3ToLatLng(h3Index);
+        if (!coord) {
+          console.warn('[RealTimeMap] h3ToLatLng returned null for:', h3Index);
+          return;
+        }
+        
+        const { latitude: lat, longitude: lng } = coord; // ✅ 正確的對象解構
+        const circleCoords = getLowPolyCircle(lat, lng, CIRCLE_RADIUS_METERS, 8);
+        multiPolygonCoordinates.push([circleCoords]);
+      } catch (error) {
+        console.warn('[RealTimeMap] Failed to convert H3 to circle:', h3Index, error);
+      }
+    });
+    
+    if (multiPolygonCoordinates.length === 0) {
+      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No polygons generated');
+      return null;
+    }
+    
+    console.log('[RealTimeMap] ✅ Generated', multiPolygonCoordinates.length, 'H3 circles for session');
+    
+    return {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {},
+          geometry: {
+            type: 'MultiPolygon' as const,
+            coordinates: multiPolygonCoordinates,
+          },
+        },
+      ],
+    };
+  }, [getLowPolyCircle]);
 
   // 根據 showHistoryTrail 確定實際的地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
@@ -410,6 +516,28 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         console.log('[RealTimeMap] ✅ LivePath 已重新啟用（準備下次採集）');
       }, 200);
       
+      // ⭐⭐ 智能週期性清理：每 5 次採集執行一次深度清理（降低閃爍頻率 + 延遲執行）
+      collectionCountRef.current += 1;
+      const currentCount = collectionCountRef.current;
+      console.log('[RealTimeMap] 📊 採集計數器:', currentCount);
+      
+      if (currentCount % 5 === 0) {
+        console.log('[RealTimeMap] 🔄 準備執行第', currentCount, '次採集後的深度清理（防止累積問題）');
+        
+        // ⚡️ 關鍵：延遲 1.5 秒執行，用戶注意力已轉移，減少閃爍感知
+        setTimeout(() => {
+          // 步驟 1: 深度清理 H3 圖層
+          setH3DeepCleanTrigger(prev => prev + 1);
+          console.log('[RealTimeMap] 🧹 深度清理 H3 圖層（步驟 1/2）');
+          
+          // 步驟 2: 延遲 500ms 後完成清理
+          setTimeout(() => {
+            setHexesRenderKey(prev => prev + 1);
+            console.log('[RealTimeMap] ✅ 深度清理完成（步驟 2/2）');
+          }, 500);
+        }, 1500); // 1.5 秒延遲，降低閃爍感知
+      }
+      
       // ⭐ 修復：不再提前清除 currentSessionNewHexes
       // 讓 endSession → mergeCurrentSessionHexes 自然處理合併和清除
       // 避免在合併之前就清空數據導致漏圖
@@ -420,6 +548,25 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       console.log('[RealTimeMap] ▶️ 採集進行中，當前會話新 H3 數量:', currentSessionNewHexes.size);
     }
   }, [isCollecting, currentSessionNewHexes.size, exploredHexes.size]);
+  
+  // ⭐⭐⭐ 徹底修復：更新歷史會話列表（從 GPS 持久化數據讀取，就像 GPS 軌跡一樣）
+  useEffect(() => {
+    const updateSessions = () => {
+      const sessions = gpsHistoryService.getAllSessions()
+        .filter(s => s.endTime) // 只要已結束的會話
+        .slice(0, 20); // 最近 20 次會話（避免渲染過多組件）
+      setHistorySessions(sessions);
+      console.log('[RealTimeMap] 📊 Loaded', sessions.length, 'historical sessions for H3 rendering');
+    };
+    
+    // 初始化時載入
+    updateSessions();
+    
+    // 每次採集停止時更新（延遲 500ms 確保數據已保存）
+    if (!isCollecting) {
+      setTimeout(updateSessions, 500);
+    }
+  }, [isCollecting, isHydrated]);
   
   // ⭐ 新增：檢查 hydration 狀態
   useEffect(() => {
@@ -1210,17 +1357,34 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }}
       >
-        {/* ⭐ 優化：使用 GeoJSON MultiPolygon 渲染 H3 圓形氣泡（Teal 配色，與綠色路徑搭配） */}
-        {actualMapMode === 'GAME' && isHydrated && h3GeoJsonData && (
-          <Geojson
-            key={`history-bubbles-${exploredHexes.size}-${hexesRenderKey}`} // ⭐⭐ 修復 2：結合 size 和 renderKey，確保多次採集後正確重繪
-            geojson={h3GeoJsonData}
-            fillColor="rgba(38, 166, 154, 0.2)" // ⭐ Teal 400，20% 透明度（類比色和諧，與綠色路徑搭配）
-            strokeColor="rgba(0, 0, 0, 0)" // 無邊框（完全透明）
-            strokeWidth={0} // 無邊框
-            zIndex={1} // ⭐ 在底圖之上，但在玩家游標之下
-          />
-        )}
+        {/* ⭐⭐⭐ 徹底修復：為每個會話單獨渲染 H3（就像 GPS 軌跡一樣） */}
+        {/* 數據來源：直接從 gpsHistoryService 的持久化 GPS points 計算，不依賴動態的 exploredHexes Set */}
+        {/* 優點：無漏圖（每個會話數據獨立）、無閃爍（key 固定）、易於調試（清楚每個會話狀態） */}
+        {actualMapMode === 'GAME' && isHydrated && historySessions.map((session, index) => {
+          console.log(`[RealTimeMap] 🎨 Rendering H3 for session ${index + 1}/${historySessions.length}:`, {
+            sessionId: session.sessionId,
+            pointsCount: session.points.length,
+          });
+          
+          const geoJson = calculateSessionH3GeoJson(session.points);
+          if (!geoJson) {
+            console.warn(`[RealTimeMap] ⚠️ No GeoJSON generated for session ${session.sessionId}`);
+            return null;
+          }
+          
+          console.log(`[RealTimeMap] ✅ Rendering H3 Geojson for session ${session.sessionId}`);
+          
+          return (
+            <Geojson
+              key={`session-h3-${session.sessionId}`} // ✅ 永遠不變的 key（會話 ID 固定）
+              geojson={geoJson}
+              fillColor={SOLEFOOD_COLORS.HISTORY_H3_FILL} // 🎨 深森林綠 - 已探索的歷史領地
+              strokeColor={SOLEFOOD_COLORS.HISTORY_H3_STROKE} // 無邊框
+              strokeWidth={0} // 無邊框
+              zIndex={1} // ⭐ 在底圖之上，但在玩家游標之下
+            />
+          );
+        })}
 
         {/* ⭐ 新增：當前會話的新領地（高亮顯示，探索者模式的「即時墨水」） */}
         {/* ⚡️ 關鍵修復：只在採集進行中時顯示綠色層，停止時立即隱藏 */}
@@ -1228,8 +1392,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           <Geojson
             key="current-session-layer"
             geojson={currentSessionGeoJsonData}
-            fillColor="rgba(76, 175, 80, 0.4)" // ⭐ 亮綠色，40% 透明度（高亮，表示「新鮮墨水」）
-            strokeColor="rgba(76, 175, 80, 0.6)" // ⭐ 半透明綠色邊框
+            fillColor={SOLEFOOD_COLORS.REALTIME_H3_FILL} // 🎨 活力薄荷綠 - 正在探索的新領地
+            strokeColor={SOLEFOOD_COLORS.REALTIME_H3_STROKE} // 半透明綠色邊框
             strokeWidth={1}
             zIndex={2} // ⭐ 在歷史軌跡之上，表示「最新探索」
           />
@@ -1253,7 +1417,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           <LivePath
             key="live-path-collecting" // ⭐⭐ 修復 1：簡化為固定 key，完全依賴條件渲染控制生命週期
             coordinates={trailCoordinates}
-            strokeColor="rgba(255, 112, 67, 0.85)" // 🔥 Coral Orange - 與 Teal 背景完美互補，STEPN 風格
+            strokeColor={SOLEFOOD_COLORS.REALTIME_GPS} // 🎨 活力橙 - 移動軌跡的熱情與活力
             strokeWidth={5}
             opacity={0.95} // ⚡️ 高透明度確保清晰可見
             zIndex={3}
