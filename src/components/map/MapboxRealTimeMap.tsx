@@ -15,6 +15,7 @@ import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native
 import Mapbox from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { Asset } from 'expo-asset';
 import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -60,6 +61,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   const [isRecenteringManually, setIsRecenteringManually] = useState(false); // 手動重新定位標誌
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D'); // 視角模式：2D 空照圖 or 3D 傾斜
   const [timeTheme, setTimeTheme] = useState<'morning' | 'night'>('night'); // ✅ 時間主題：早晨 or 夜晚
+  const [is3DModelReady, setIs3DModelReady] = useState(false); // ✅ 3D 模型是否已註冊
 
   // Refs
   const cameraRef = useRef<Mapbox.Camera>(null);
@@ -180,6 +182,45 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
       setSelectedSession(session || null);
     }
   }, [showHistoryTrail, selectedSessionId, historySessions]);
+
+  // ========== 3D 模型註冊 ==========
+  useEffect(() => {
+    const register3DModel = async () => {
+      if (!mapRef.current) {
+        console.log('[3D Model] ⏳ 等待地圖初始化...');
+        return;
+      }
+
+      try {
+        // ⚠️ 暫時禁用：Metro bundler 無法識別 GLB 文件
+        // 需要研究替代方案（expo-file-system 或網絡 URL）
+        console.log('[3D Model] ℹ️ 3D 模型功能暫時禁用');
+        console.log('[3D Model] ℹ️ 使用原來的箭頭游標');
+        setIs3DModelReady(false);
+        
+        /* 原始代碼（待修復）
+        console.log('[3D Model] 📦 開始加載模型...');
+        const asset = Asset.fromModule(require('../../assets/models/user-avator.glb'));
+        await asset.downloadAsync();
+        
+        console.log('[3D Model] 📍 模型 URI:', asset.localUri || asset.uri);
+        
+        // 註冊模型到 Mapbox
+        await mapRef.current.addModel('user-avatar-model', asset.localUri || asset.uri);
+        
+        setIs3DModelReady(true);
+        console.log('[3D Model] ✅ 3D 模型註冊成功！');
+        */
+      } catch (error) {
+        console.error('[3D Model] ❌ 模型註冊失敗:', error);
+        setIs3DModelReady(false);
+      }
+    };
+
+    // 延遲註冊，確保地圖完全加載
+    const timer = setTimeout(register3DModel, 1000);
+    return () => clearTimeout(timer);
+  }, [timeTheme]); // 主題切換時重新註冊
 
   // ========== H3 Hexes GeoJSON 生成 ==========
   
@@ -423,6 +464,35 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
     };
   }, [isCollecting, currentLocation]); // ✅ 新增 currentLocation 依賴，確保每次位置更新都重繪
 
+  // 用戶 3D 模型 GeoJSON
+  const userModelGeoJson = useMemo(() => {
+    // 只在遊戲模式且有位置時顯示
+    if (!currentLocation || actualMapMode !== 'GAME' || !is3DModelReady) {
+      return null;
+    }
+
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [
+            currentLocation.coords.longitude,
+            currentLocation.coords.latitude,
+            0, // 高度（米）
+          ],
+        },
+        properties: {
+          // 旋轉角度（根據運動方向）
+          rotation: displayHeadingAdjusted,
+          // 速度（用於動態縮放）
+          speed: currentSpeed,
+        },
+      }],
+    };
+  }, [currentLocation, actualMapMode, is3DModelReady, displayHeadingAdjusted, currentSpeed]);
+
   // ========== 渲染 ==========
   
   const mapStyle = height ? { height } : styles.map;
@@ -593,6 +663,52 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           </Mapbox.ShapeSource>
           );
         })()}
+
+        {/* 🎮 用戶 3D 模型（GLB）- 需要先放置模型文件並取消註冊代碼的註解 */}
+        {userModelGeoJson && is3DModelReady && (
+          <Mapbox.ShapeSource id="user-3d-model-source" shape={userModelGeoJson}>
+            <Mapbox.ModelLayer
+              id="user-3d-model-layer"
+              style={{
+                // ✅ 模型 ID（需要先在 useEffect 中註冊）
+                modelId: 'user-avatar-model',
+                
+                // ✅ 旋轉（根據運動方向）
+                modelRotation: [
+                  0,  // pitch (俯仰角)
+                  0,  // roll (滾轉角)
+                  ['get', 'rotation']  // yaw (偏航角 = 運動方向)
+                ],
+                
+                // ✅ 縮放（根據 zoom level 動態調整）
+                modelScale: [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  15, [0.5, 0.5, 0.5],   // zoom 15: 小一點
+                  17, [1, 1, 1],         // zoom 17: 正常大小
+                  20, [1.5, 1.5, 1.5]    // zoom 20: 大一點
+                ],
+                
+                // ✅ 模型類型
+                modelType: 'common-3d',
+                
+                // ✅ 透明度
+                modelOpacity: 1,
+                
+                // ✅ 環境光遮蔽
+                modelAmbientOcclusionIntensity: 0.5,
+                
+                // ✅ 自發光強度（根據主題調整）
+                modelEmissiveStrength: timeTheme === 'morning' ? 0.5 : 0.2,
+                
+                // ✅ 陰影
+                modelCastShadows: true,
+                modelReceiveShadows: true,
+              }}
+            />
+          </Mapbox.ShapeSource>
+        )}
       </Mapbox.MapView>
 
       {/* 🌓 時間主題切換按鈕（早晨/夜晚） */}
