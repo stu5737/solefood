@@ -53,7 +53,8 @@ export const CAMERA_CONFIG = {
  */
 export const MORNING_THEME = {
   name: '早晨',
-  mapStyle: 'mapbox://styles/mapbox/light-v11', // ✅ 淺色地圖
+  // ✅ 方案 1：改用支持 3D 的樣式（streets-v12 支持更好的 3D 渲染）
+  mapStyle: 'mapbox://styles/mapbox/streets-v12', // 從 light-v11 改為 streets-v12（支持 3D）
   historyH3: {
     heatmapColor: [
       'interpolate', ['linear'], ['heatmap-density'],
@@ -91,7 +92,8 @@ export const MORNING_THEME = {
  */
 export const NIGHT_THEME = {
   name: '夜晚',
-  mapStyle: 'mapbox://styles/mapbox/dark-v11', // ✅ 深色地圖
+  // ✅ 方案 1：改用支持 3D 的樣式（保持深色但支持 3D）
+  mapStyle: 'mapbox://styles/mapbox/streets-v12', // 從 dark-v11 改為 streets-v12（支持 3D，但可以通過其他方式變暗）
   historyH3: {
     heatmapColor: [
       'interpolate', ['linear'], ['heatmap-density'],

@@ -15,7 +15,6 @@ import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native
 import Mapbox from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { Asset } from 'expo-asset';
 import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -61,7 +60,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   const [isRecenteringManually, setIsRecenteringManually] = useState(false); // 手動重新定位標誌
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D'); // 視角模式：2D 空照圖 or 3D 傾斜
   const [timeTheme, setTimeTheme] = useState<'morning' | 'night'>('night'); // ✅ 時間主題：早晨 or 夜晚
-  const [is3DModelReady, setIs3DModelReady] = useState(false); // ✅ 3D 模型是否已註冊
+  const [is3DModelReady, setIs3DModelReady] = useState(false); // ✅ 3D 模型是否已準備
 
   // Refs
   const cameraRef = useRef<Mapbox.Camera>(null);
@@ -183,44 +182,26 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
     }
   }, [showHistoryTrail, selectedSessionId, historySessions]);
 
-  // ========== 3D 模型註冊 ==========
+  // ========== 3D 模型 URL ==========
+  
+  // ✅ 使用你的 GitHub Raw URL（已設為公開）
+  const modelUrl = 'https://raw.githubusercontent.com/stu5737/solefood/main/assets/models/user-avator.glb';
+  
+  // ========== 3D 模型準備 ==========
+  // ⚠️ 重要：模型索引數超過 Mapbox 限制（65535）
+  // 當前模型：248575 個索引（超出 3.8 倍）
+  // 需要簡化模型後才能使用
   useEffect(() => {
-    const register3DModel = async () => {
-      if (!mapRef.current) {
-        console.log('[3D Model] ⏳ 等待地圖初始化...');
-        return;
-      }
-
-      try {
-        // ⚠️ 暫時禁用：Metro bundler 無法識別 GLB 文件
-        // 需要研究替代方案（expo-file-system 或網絡 URL）
-        console.log('[3D Model] ℹ️ 3D 模型功能暫時禁用');
-        console.log('[3D Model] ℹ️ 使用原來的箭頭游標');
-        setIs3DModelReady(false);
-        
-        /* 原始代碼（待修復）
-        console.log('[3D Model] 📦 開始加載模型...');
-        const asset = Asset.fromModule(require('../../assets/models/user-avator.glb'));
-        await asset.downloadAsync();
-        
-        console.log('[3D Model] 📍 模型 URI:', asset.localUri || asset.uri);
-        
-        // 註冊模型到 Mapbox
-        await mapRef.current.addModel('user-avatar-model', asset.localUri || asset.uri);
-        
-        setIs3DModelReady(true);
-        console.log('[3D Model] ✅ 3D 模型註冊成功！');
-        */
-      } catch (error) {
-        console.error('[3D Model] ❌ 模型註冊失敗:', error);
-        setIs3DModelReady(false);
-      }
-    };
-
-    // 延遲註冊，確保地圖完全加載
-    const timer = setTimeout(register3DModel, 1000);
-    return () => clearTimeout(timer);
-  }, [timeTheme]); // 主題切換時重新註冊
+    // 暫時禁用 3D 模型，等待模型優化
+    console.log('[3D Model] ⚠️ 3D 模型暫時禁用');
+    console.log('[3D Model] ❌ 原因：模型索引數超過 Mapbox 限制');
+    console.log('[3D Model] 📊 限制：65535，你的模型：248575');
+    console.log('[3D Model] 💡 解決方案：請查看 MODEL_OPTIMIZATION_GUIDE.md');
+    console.log('[3D Model] 🔧 需要簡化模型到 < 20000 個索引');
+    
+    // 暫時不啟用
+    // setIs3DModelReady(true);
+  }, [timeTheme]);
 
   // ========== H3 Hexes GeoJSON 生成 ==========
   
@@ -467,11 +448,20 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   // 用戶 3D 模型 GeoJSON
   const userModelGeoJson = useMemo(() => {
     // 只在遊戲模式且有位置時顯示
-    if (!currentLocation || actualMapMode !== 'GAME' || !is3DModelReady) {
+    if (!currentLocation) {
+      console.log('[3D Model] ⚠️ userModelGeoJson: 無 currentLocation');
+      return null;
+    }
+    if (actualMapMode !== 'GAME') {
+      console.log('[3D Model] ⚠️ userModelGeoJson: actualMapMode =', actualMapMode, '不是 GAME');
+      return null;
+    }
+    if (!is3DModelReady) {
+      console.log('[3D Model] ⚠️ userModelGeoJson: is3DModelReady =', is3DModelReady);
       return null;
     }
 
-    return {
+    const geoJson = {
       type: 'FeatureCollection',
       features: [{
         type: 'Feature',
@@ -491,6 +481,14 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         },
       }],
     };
+    
+    console.log('[3D Model] ✅ userModelGeoJson 生成:', {
+      coordinates: geoJson.features[0].geometry.coordinates,
+      rotation: displayHeadingAdjusted,
+      speed: currentSpeed,
+    });
+    
+    return geoJson;
   }, [currentLocation, actualMapMode, is3DModelReady, displayHeadingAdjusted, currentSpeed]);
 
   // ========== 渲染 ==========
@@ -503,7 +501,13 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         key={`map-${timeTheme}`}
         ref={mapRef}
         style={styles.map}
-        styleURL={timeTheme === 'morning' ? MORNING_THEME.mapStyle : NIGHT_THEME.mapStyle}
+        // ✅ 殺手二修復：先使用 standard 樣式測試 3D 模型
+        // 如果模型顯示正常，再切換回主題樣式
+        styleURL={
+          is3DModelReady 
+            ? 'mapbox://styles/mapbox/standard' // 測試 3D 模型時使用 standard
+            : (timeTheme === 'morning' ? MORNING_THEME.mapStyle : NIGHT_THEME.mapStyle)
+        }
         logoEnabled={PERFORMANCE_CONFIG.logoEnabled}
         attributionEnabled={PERFORMANCE_CONFIG.attributionEnabled}
         compassEnabled={PERFORMANCE_CONFIG.compassEnabled}
@@ -512,6 +516,21 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         pitchEnabled={PERFORMANCE_CONFIG.pitchEnabled}
         rotateEnabled={PERFORMANCE_CONFIG.rotateEnabled}
       >
+        {/* ✅ 關鍵：先註冊模型（必須在所有圖層之前） */}
+        {is3DModelReady && (
+          <Mapbox.Models
+            models={{
+              'user-avatar-model': modelUrl, // ✅ 殺手三修復：直接使用 https:// URL，不用本地文件
+            }}
+            onPress={(e) => {
+              console.log('[3D Model] 🎯 模型被點擊:', e);
+            }}
+            onError={(error) => {
+              console.error('[3D Model] ❌ Models 組件錯誤:', error);
+            }}
+          />
+        )}
+
         {/* 🎮 Pokémon GO 風格攝影機 - 支援 2D/3D 切換 */}
         <Mapbox.Camera
           ref={cameraRef}
@@ -664,13 +683,19 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           );
         })()}
 
-        {/* 🎮 用戶 3D 模型（GLB）- 需要先放置模型文件並取消註冊代碼的註解 */}
+        {/* 🎮 用戶 3D 模型（GLB）- 使用你的 GitHub Raw URL */}
         {userModelGeoJson && is3DModelReady && (
-          <Mapbox.ShapeSource id="user-3d-model-source" shape={userModelGeoJson}>
+          <Mapbox.ShapeSource 
+            id="user-3d-model-source" 
+            shape={userModelGeoJson}
+            onPress={(e) => {
+              console.log('[3D Model] 🎯 ShapeSource 被點擊:', e);
+            }}
+          >
             <Mapbox.ModelLayer
               id="user-3d-model-layer"
               style={{
-                // ✅ 模型 ID（需要先在 useEffect 中註冊）
+                // ✅ 使用註冊的模型名稱（對應上方 Models 中的 key）
                 modelId: 'user-avatar-model',
                 
                 // ✅ 旋轉（根據運動方向）
@@ -681,16 +706,19 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
                 ],
                 
                 // ✅ 縮放（根據 zoom level 動態調整）
-                modelScale: [
-                  'interpolate',
-                  ['linear'],
-                  ['zoom'],
-                  15, [0.5, 0.5, 0.5],   // zoom 15: 小一點
-                  17, [1, 1, 1],         // zoom 17: 正常大小
-                  20, [1.5, 1.5, 1.5]    // zoom 20: 大一點
-                ],
+                // ⚠️ 極限除錯法：先使用固定大值測試
+                modelScale: [200, 200, 200], // ✅ 固定 200 倍大測試（如果看到再調小）
+                // 如果看到模型，可以改回動態縮放：
+                // modelScale: [
+                //   'interpolate',
+                //   ['linear'],
+                //   ['zoom'],
+                //   15, [1, 1, 1],
+                //   17, [1.5, 1.5, 1.5],
+                //   20, [2, 2, 2]
+                // ],
                 
-                // ✅ 模型類型
+                // ✅ 模型類型（使用 common-3d，location 可能不是有效值）
                 modelType: 'common-3d',
                 
                 // ✅ 透明度
