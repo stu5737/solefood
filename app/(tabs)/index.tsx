@@ -1,505 +1,484 @@
 /**
- * 主遊戲畫面 - 戶外模式（採集地圖）
- * 使用「千層蛋糕法」逐步堆疊 UI
- * 
- * 第一步：建立最乾淨的地圖底層
+ * 主遊戲畫面 - Pokémon GO 風格 v9.0 Plus
+ * 完整狀態機 + 磁吸系統 + 零教學 UI
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   StyleSheet,
   StatusBar,
-  TouchableOpacity,
-  Text,
   SafeAreaView,
   Modal,
   ScrollView,
   Dimensions,
-  Switch,
-  Animated,
+  Text,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { RealTimeMap } from '../../src/components/map/RealTimeMap';
-import { SimulatorMode } from '../../src/components/game/SimulatorMode';
-import { DevDashboard } from '../../src/components/game/DevDashboard';
+import { UnifiedMap } from '../../src/components/map';
+import {
+  BackpackCard,
+  TopStaminaBar,
+  MainActionButton,
+  FloatingTextSystem,
+  useFloatingText,
+  RescueModal,
+  LeftToolbar,
+  DevDashboard,
+} from '../../src/components/game';
+import type { GameState } from '../../src/components/game';
+import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
 import { locationService } from '../../src/services/location';
 import { gpsHistoryService } from '../../src/services/gpsHistory';
 import { explorationService } from '../../src/services/exploration';
 import { bgTrackingNotification } from '../../src/services/backgroundTrackingNotification';
 import { backgroundLocationService } from '../../src/services/BackgroundLocationService';
-import { entropyEngine } from '../../src/core/entropy/engine';
+import { magnetSystem } from '../../src/systems/MagnetSystem';
+import type { MagnetSystemCallbacks } from '../../src/systems/MagnetSystem';
 import { useSessionStore } from '../../src/stores/sessionStore';
+import { usePlayerStore } from '../../src/stores/playerStore';
+import { useInventoryStore } from '../../src/stores/inventoryStore';
 import type { CollectionSession } from '../../src/services/gpsHistory';
-import type { MovementInput } from '../../src/core/entropy/events';
+import type { Item } from '../../src/types/item';
 
-// 創建動畫化的 TouchableOpacity 組件
-const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+export default function GameScreenV9Plus() {
+  // 從 Store 獲取狀態
+  const updateExploredHexesFromHistory = useSessionStore(
+    (state) => state.updateExploredHexesFromHistory
+  );
+  const stamina = usePlayerStore((state) => state.stamina);
+  const durability = usePlayerStore((state) => state.durability);
+  const effectiveMaxWeight = usePlayerStore((state) => state.getEffectiveMaxWeight());
+  const totalWeight = useInventoryStore((state) => state.totalWeight);
+  const items = useInventoryStore((state) => state.items);
 
-export default function GameScreen() {
-  // 從 Store 獲取地圖模式和更新方法
-  const updateExploredHexesFromHistory = useSessionStore((state) => state.updateExploredHexesFromHistory);
-  
+  // 基礎狀態
   const [isReady, setIsReady] = useState(false);
-  const [isCollecting, setIsCollecting] = useState(false); // 採集狀態
-  const [showHistoryTrail, setShowHistoryTrail] = useState(false); // 是否顯示歷史軌跡
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null); // 選中的歷史會話ID
-  const [allSessions, setAllSessions] = useState<CollectionSession[]>([]); // 所有歷史會話
-  const [isSimulatorMode, setIsSimulatorMode] = useState(false); // 模式切換：false=戶外模式, true=模擬器模式
-  const [showDevDashboard, setShowDevDashboard] = useState(true); // 開發者控制台顯示開關（默認開啟，用於測試）
+  const [gameState, setGameState] = useState<GameState>('IDLE');
+  const [showDevDashboard, setShowDevDashboard] = useState(true);
 
-  // 按鈕動畫值（scale: 1 -> 0.9）
-  const scanButtonScale = useRef(new Animated.Value(1)).current;
-  const historyButtonScale = useRef(new Animated.Value(1)).current;
-  const unloadButtonScale = useRef(new Animated.Value(1)).current;
-  const picnicButtonScale = useRef(new Animated.Value(1)).current;
+  // 歷史軌跡狀態
+  const [showHistoryTrail, setShowHistoryTrail] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [allSessions, setAllSessions] = useState<CollectionSession[]>([]);
 
+  // 救援彈窗狀態
+  const [rescueModalVisible, setRescueModalVisible] = useState(false);
+  const [rescueType, setRescueType] = useState<RescueType>('Adrenaline');
+  const [rescueTitle, setRescueTitle] = useState('');
+  const [rescueDesc, setRescueDesc] = useState('');
+  const [rescueReward, setRescueReward] = useState('');
+  const [pendingItem, setPendingItem] = useState<Item | null>(null);
+
+  // 飄字系統
+  const { texts: floatingTexts, showFloatingText, removeText } = useFloatingText();
+
+  // 背包滿倉檢測
+  const isBackpackFull = totalWeight >= effectiveMaxWeight * 0.95; // 95% 即視為滿倉
+
+  // 可消耗物品數量（T1 + T2）
+  const consumableCount = items.filter((item) => item.tier === 1 || item.tier === 2).length;
+
+  // ========== 初始化 ==========
   useEffect(() => {
-    // 初始化服務並獲取位置
     const initialize = async () => {
       try {
         // 初始化服務
         await explorationService.initialize();
         await gpsHistoryService.initialize();
-        
-        // ⭐ 新增：診斷日誌
-        const historyCount = gpsHistoryService.getHistoryCount();
-        const sessions = gpsHistoryService.getAllSessions();
-        console.log('[GameScreen] 📊 GPS History Status:', {
-          historyPoints: historyCount,
-          sessions: sessions.length,
-        });
-        
-        // ⭐ 關鍵修復：等待 GPS 歷史完全載入後再更新 H3
-        // 給一個短暫延遲，確保數據完全載入
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // ⭐ 關鍵修復：強制更新 exploredHexes（確保從歷史數據生成）
-        console.log('[GameScreen] 🔄 Updating exploredHexes from history...');
+
+        // 等待數據載入
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // 更新 exploredHexes
         await updateExploredHexesFromHistory();
-        
-        // 再次檢查 exploredHexes
-        const store = useSessionStore.getState();
-        console.log('[GameScreen] 📊 After updateExploredHexesFromHistory:', {
-          exploredHexesCount: store.exploredHexes.size,
-        });
-        
-        // ⭐ 新增：強制保存一次，確保數據同步
+
+        // 強制保存
         try {
           await gpsHistoryService.forceSave();
-          console.log('[GameScreen] ✅ Force save completed after initialization');
+          console.log('[GameScreen] ✅ 初始化完成');
         } catch (error) {
-          console.error('[GameScreen] ❌ Force save failed after initialization:', error);
+          console.error('[GameScreen] ❌ 強制保存失敗:', error);
         }
-        
-        // 請求位置權限並獲取當前位置
+
+        // 請求位置權限
         const hasPermission = await locationService.checkPermissions();
         if (!hasPermission) {
           await locationService.requestPermissions();
         }
-        
-        // 獲取初始位置（如果失敗也繼續，因為 watchPositionAsync 會持續獲取）
+
+        // 獲取初始位置
         try {
           const location = await locationService.getCurrentLocation();
           if (location) {
-            console.log('[GameScreen] Initial location:', location);
-      } else {
-            console.warn('[GameScreen] Failed to get initial location, but tracking will continue via watchPositionAsync');
+            console.log('[GameScreen] 初始位置:', location);
           }
-    } catch (error) {
-          console.warn('[GameScreen] Error getting initial location:', error);
-          // 繼續執行，因為 watchPositionAsync 會持續獲取位置
+        } catch (error) {
+          console.warn('[GameScreen] 獲取初始位置失敗:', error);
         }
-        
-        // ⭐ 修復：使用已經聲明的 sessions 變數，避免重複聲明
+
+        // 載入歷史會話
+        const sessions = gpsHistoryService.getAllSessions();
         setAllSessions(sessions);
-        
+
+        // 初始化磁吸系統
+        const magnetCallbacks: MagnetSystemCallbacks = {
+          onT3Encounter: handleT3Encounter,
+          onStaminaShortage: handleStaminaShortage,
+          onBackpackFullT2: handleBackpackFullT2,
+          onNormalPickup: handleNormalPickup,
+          onItemIgnored: handleItemIgnored,
+          showFloatingText: showFloatingText,
+        };
+        magnetSystem.initialize(magnetCallbacks);
+
         setIsReady(true);
-    } catch (error) {
-        console.error('[GameScreen] Initialization error:', error);
-        setIsReady(true); // 即使失敗也繼續，讓地圖顯示
+      } catch (error) {
+        console.error('[GameScreen] 初始化錯誤:', error);
+        setIsReady(true);
       }
     };
 
     initialize();
 
-    // 清理函數：組件卸載時，如果有活動會話，強制結束並保存
+    // 清理函數
     return () => {
       if (gpsHistoryService.isSessionActive()) {
-        console.warn('[GameScreen] Component unmounting with active session, ending session...');
-        // ⭐ 注意：清理函數不能是 async，所以使用立即執行的 async 函數
+        console.warn('[GameScreen] 組件卸載，結束會話...');
         (async () => {
-          await gpsHistoryService.endSession('picnic'); // 默認使用 picnic 結束
-          gpsHistoryService.forceSave(); // 強制保存
+          await gpsHistoryService.endSession('picnic');
+          gpsHistoryService.forceSave();
         })();
       }
+
+      // 停止磁吸系統
+      magnetSystem.stop();
     };
   }, []);
+
+  // ========== 狀態機邏輯 ==========
+
+  /**
+   * 開始採集
+   */
+  const handleStartShift = async () => {
+    // 檢查 1: 零容忍 - 耐久度
+    if (durability <= 0) {
+      Alert.alert('背包已損毀', '負重能力歸零。請先維修。', [
+        { text: '確定', style: 'cancel' },
+      ]);
+      return;
+    }
+    
+    // 檢查 2: 零容忍 - 體力
+    if (stamina <= 0) {
+      setRescueType('GhostRevival');
+      setRescueTitle('靈魂模式');
+      setRescueDesc('體力耗盡！觀看廣告復活？');
+      setRescueReward('恢復 30 體力');
+      setRescueModalVisible(true);
+      return;
+    }
+    
+    // 通過檢查 - 開始採集
+    await startCollection();
+  };
+
+  const startCollection = async () => {
+    // 清空之前會話的新 H3
+    const store = useSessionStore.getState();
+    if (store.clearCurrentSessionHexes) {
+      store.clearCurrentSessionHexes();
+    }
+
+    const sessionId = await gpsHistoryService.startSession();
+    console.log('[GameScreen] 🚀 開始採集:', sessionId);
+
+    setGameState('COLLECTING');
+
+    // 啟動背景服務
+    bgTrackingNotification.startTracking();
+    await backgroundLocationService.startBackgroundTracking();
+
+    // 啟動磁吸系統
+    magnetSystem.start();
+
+    showFloatingText('🎯 開始探索！', '#4CAF50');
+  };
+
+  /**
+   * 卸貨
+   */
+  const handleUnload = async () => {
+    console.log('[GameScreen] 🚗 卸貨...');
+
+    setGameState('UNLOADING');
+
+    // 停止磁吸系統
+    magnetSystem.stop();
+
+    // 停止背景服務
+    bgTrackingNotification.stopTracking();
+    await backgroundLocationService.stopBackgroundTracking();
+
+    // 結束會話
+    await gpsHistoryService.endSession('unload');
+
+    // 更新歷史會話
+    const sessions = gpsHistoryService.getAllSessions();
+    setAllSessions(sessions);
+
+    // 顯示卸貨結算彈窗（這裡可以擴展）
+    showFloatingText('💰 卸貨完成！', '#2196F3');
+
+    // 重置狀態
+    setGameState('IDLE');
+  };
+
+  /**
+   * 野餐
+   */
+  const handlePicnic = async () => {
+    console.log('[GameScreen] 🍽️ 野餐...');
+
+    setGameState('PICNIC');
+
+    // 停止磁吸系統
+    magnetSystem.stop();
+
+    // 停止背景服務
+    bgTrackingNotification.stopTracking();
+    await backgroundLocationService.stopBackgroundTracking();
+
+    // 結束會話
+    await gpsHistoryService.endSession('picnic');
+
+    // 更新歷史會話
+    const sessions = gpsHistoryService.getAllSessions();
+    setAllSessions(sessions);
+
+    // 計算體力恢復（示例邏輯）
+    const recoveredStamina = Math.min(30, 100 - stamina);
+    usePlayerStore.getState().updateStamina(recoveredStamina);
+
+    showFloatingText(`+${recoveredStamina} ⚡`, '#4CAF50');
+
+    // 重置狀態
+    setGameState('IDLE');
+  };
+
+  // ========== 磁吸系統回調 ==========
+
+  const handleT3Encounter = useCallback((item: Item) => {
+    console.log('[GameScreen] 🟣 T3 遭遇:', item);
+    setPendingItem(item);
+    setRescueType('Adrenaline'); // T3 不需要廣告，但使用相同彈窗
+    setRescueTitle('🟣 發現皇室純糖！');
+    setRescueDesc(`消耗 30 體力拾取\n價值: ${item.value} $SOLE`);
+    setRescueReward('');
+    // 這裡應該顯示一個特殊的確認彈窗，而非救援彈窗
+    // 暫時使用 Alert
+      Alert.alert(
+      '🟣 發現皇室純糖！',
+      `消耗 30 體力拾取\n價值: ${item.value} $SOLE`,
+      [
+        {
+          text: '取消',
+            style: 'cancel',
+            onPress: () => {
+            magnetSystem.handleAdCancel(item);
+            },
+          },
+          {
+          text: '拾取',
+          onPress: async () => {
+            const success = await magnetSystem.confirmT3Pickup(item);
+            if (success) {
+              showFloatingText('🟣 皇室純糖！', '#9C27B0');
+            } else {
+              showFloatingText('拾取失敗', '#F44336');
+            }
+            },
+          },
+        ]
+      );
+  }, [showFloatingText]);
+
+  const handleStaminaShortage = useCallback((item: Item) => {
+    console.log('[GameScreen] 💉 體力不足:', item);
+    setPendingItem(item);
+    setRescueType('Adrenaline');
+    setRescueTitle('體力不足');
+    setRescueDesc(`需要 ${item.pickupCost} 體力\n觀看廣告 +30 體力並自動拾取？`);
+    setRescueReward('+30 體力');
+    setRescueModalVisible(true);
+  }, []);
+
+  const handleBackpackFullT2 = useCallback((item: Item) => {
+    console.log('[GameScreen] 📦 背包已滿 (T2):', item);
+    setPendingItem(item);
+    setRescueType('TempExpansion');
+    setRescueTitle('背包已滿');
+    setRescueDesc('發現 T2 翡翠晶糖\n觀看廣告啟用 +50% 臨時空間？');
+    setRescueReward('+50% 容量');
+    setRescueModalVisible(true);
+  }, []);
+
+  const handleNormalPickup = useCallback((item: Item) => {
+    console.log('[GameScreen] ✅ 正常拾取:', item);
+    const tierName = item.tier === 1 ? '琥珀糖' : item.tier === 2 ? '翡翠晶糖' : '皇室純糖';
+    const tierColor = item.tier === 1 ? '#FFC107' : item.tier === 2 ? '#4CAF50' : '#9C27B0';
+    showFloatingText(`+1 ${tierName}`, tierColor);
+    showFloatingText(`-${item.pickupCost} ⚡`, '#FF9800', 45, 55);
+  }, [showFloatingText]);
+
+  const handleItemIgnored = useCallback((item: Item, reason: string) => {
+    console.log('[GameScreen] ❌ 物品被忽略:', item, reason);
+    showFloatingText('已放棄物品', '#888');
+  }, [showFloatingText]);
+
+  // ========== 救援廣告處理 ==========
+
+  const handleAdSuccess = async () => {
+    console.log('[GameScreen] 📺 廣告成功:', rescueType);
+
+    if (rescueType === 'GhostRevival') {
+      // 靈魂復活
+      usePlayerStore.getState().updateStamina(30);
+      showFloatingText('+30 ⚡', '#4CAF50');
+      setRescueModalVisible(false);
+      // 復活後可以開始採集
+      await startCollection();
+    } else if (rescueType === 'Adrenaline' || rescueType === 'TempExpansion') {
+      // 腎上腺素或臨時擴容
+      await magnetSystem.handleAdSuccess(
+        rescueType === 'Adrenaline' ? 'Adrenaline' : 'TempExpansion',
+        pendingItem || undefined
+      );
+      setRescueModalVisible(false);
+      setPendingItem(null);
+    }
+  };
+
+  const handleAdCancel = () => {
+    console.log('[GameScreen] ❌ 用戶取消廣告');
+
+    if (pendingItem) {
+      magnetSystem.handleAdCancel(pendingItem);
+      setPendingItem(null);
+    }
+
+    setRescueModalVisible(false);
+  };
+
+  // ========== 工具欄功能 ==========
+
+  const handleShowHistory = () => {
+    const sessions = gpsHistoryService.getAllSessions();
+    setAllSessions(sessions);
+    if (sessions.length > 0) {
+      setSelectedSessionId(sessions[0].sessionId);
+      setShowHistoryTrail(true);
+    }
+  };
+
+  const handleRecenterMap = () => {
+    // 這裡應該觸發地圖重新定位
+    console.log('[GameScreen] 📍 重新定位');
+    showFloatingText('📍 重新定位', '#2196F3');
+  };
+
+  const handleQuickConsume = () => {
+    // 快速食用第一個 T1 物品
+    const t1Item = items.find((item) => item.tier === 1);
+    if (t1Item) {
+      useInventoryStore.getState().consumeItem(t1Item.id);
+      showFloatingText('+5 ⚡', '#4CAF50');
+    }
+  };
+
+  // ========== 渲染 ==========
 
   return (
     <View style={styles.container}>
       {/* 狀態列 */}
-      <StatusBar
-        translucent={true}
-        backgroundColor="transparent"
-        barStyle="light-content"
-      />
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-      {/* ========== 模式切換開關（頂部） ========== */}
+      {/* 地圖層（全屏） */}
       {isReady && (
-        <SafeAreaView style={styles.modeSwitchContainer} pointerEvents="box-none">
-          <View style={styles.modeSwitch}>
-            <Text style={styles.modeLabel}>🌍</Text>
-            <View style={styles.modeSwitchWrapper}>
-              <Switch
-                value={isSimulatorMode}
-                onValueChange={(value) => {
-                  setIsSimulatorMode(value);
-                  // 切換模式時，如果正在採集，保持採集狀態
-                }}
-                trackColor={{ false: '#4CAF50', true: '#9C27B0' }}
-                thumbColor="#FFFFFF"
-                ios_backgroundColor="#3e3e3e"
-          />
-        </View>
-            <Text style={styles.modeLabel}>🎮</Text>
-            {/* 開發者控制台開關（縮小版） */}
-          <TouchableOpacity
-              style={styles.devToggleButtonMini}
-              onPress={() => setShowDevDashboard(!showDevDashboard)}
-          >
-              <Text style={styles.devToggleTextMini}>
-                {showDevDashboard ? '🔧' : '⚙️'}
-              </Text>
-          </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      )}
-
-      {/* ========== 戶外模式：地圖顯示 ========== */}
-      {isReady && !isSimulatorMode && (
         <View style={styles.mapWrapper}>
-          <RealTimeMap
-            showTrail={true}   // 顯示 GPS 軌跡
-            height={undefined}
-            isCollecting={isCollecting}  // 由按鈕控制
+          <UnifiedMap
+            isCollecting={gameState === 'COLLECTING'}
             selectedSessionId={selectedSessionId}
             showHistoryTrail={showHistoryTrail}
           />
-          
-          {/* 開發者控制台（浮在地圖上方，只在未查看歷史時顯示） */}
-          {showDevDashboard && !showHistoryTrail && (
-            <DevDashboard visible={showDevDashboard} />
-          )}
         </View>
       )}
 
-      {/* ========== 模擬器模式：模擬器界面 ========== */}
-      {isReady && isSimulatorMode && (
-        <>
-          <SimulatorMode
-            isCollecting={isCollecting}
-            onStartCollection={async () => {
-              // ⭐ 清空之前會話的新 H3（如果有的話）
-              const { useSessionStore } = require('../../src/stores/sessionStore');
-              const store = useSessionStore.getState();
-              if (store.clearCurrentSessionHexes) {
-                store.clearCurrentSessionHexes();
-              }
-              
-              const sessionId = await gpsHistoryService.startSession();
-              console.log('[GameScreen] Started collection session (simulator):', sessionId);
-              setIsCollecting(true);
-              // 啟動背景定位通知
-              bgTrackingNotification.startTracking();
-              // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
-              backgroundLocationService.startBackgroundTracking().then((success) => {
-                if (success) {
-                  console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
-                } else {
-                  console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
-                }
-              });
-            }}
-            onEndCollection={async (type) => {
-              await gpsHistoryService.endSession(type);
-              setIsCollecting(false);
-              const sessions = gpsHistoryService.getAllSessions();
-              setAllSessions(sessions);
-              console.log(`[GameScreen] Ended collection session (simulator): ${type}`);
-              // 停止背景定位通知
-              bgTrackingNotification.stopTracking();
-              // ⭐ 關鍵：停止背景位置追蹤任務
-              backgroundLocationService.stopBackgroundTracking();
-            }}
-          />
-          
-          {/* 開發者控制台（在模擬器模式下也顯示，浮在 SimulatorMode 上方） */}
-          {showDevDashboard && (
-            <View style={styles.devDashboardOverlay}>
-              <DevDashboard visible={showDevDashboard} />
-        </View>
-          )}
-        </>
-      )}
-
-      {/* ========== 採集控制按鈕層（只在戶外模式且未查看歷史時顯示） ========== */}
-      {isReady && !isSimulatorMode && !showHistoryTrail && (
-        <>
-          {/* 左側功能工具列 */}
-          <View style={styles.sideToolbar}>
-            {allSessions.length > 0 && (
-              <AnimatedTouchableOpacity
-                style={[
-                  styles.sideToolButton,
-                  { transform: [{ scale: historyButtonScale }] }
-                ]}
-                onPressIn={() => {
-                  Animated.spring(historyButtonScale, {
-                    toValue: 0.9,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(historyButtonScale, {
-                    toValue: 1,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  const sessions = gpsHistoryService.getAllSessions();
-                  setAllSessions(sessions);
-                  if (sessions.length > 0) {
-                    setSelectedSessionId(sessions[0].sessionId);
-                    setShowHistoryTrail(true);
-                  }
-                }}
-              >
-                <Ionicons name="map-outline" size={24} color="#FFFFFF" />
-              </AnimatedTouchableOpacity>
-            )}
-            {isCollecting && (
-              <>
-                <AnimatedTouchableOpacity
-                  style={[
-                    styles.sideToolButton,
-                    styles.unloadToolButton,
-                    { transform: [{ scale: unloadButtonScale }] }
-                  ]}
-                  onPressIn={() => {
-                    Animated.spring(unloadButtonScale, {
-                      toValue: 0.9,
-                      useNativeDriver: true,
-                    }).start();
-                  }}
-                  onPressOut={() => {
-                    Animated.spring(unloadButtonScale, {
-                      toValue: 1,
-                      useNativeDriver: true,
-                    }).start();
-                  }}
-                  onPress={async () => {
-                    await gpsHistoryService.endSession('unload');
-                    setIsCollecting(false);
-                    const sessions = gpsHistoryService.getAllSessions();
-                    setAllSessions(sessions);
-                    console.log('[GameScreen] Ended collection session: unload');
-                    // 停止背景定位通知
-                    bgTrackingNotification.stopTracking();
-                    // ⭐ 關鍵：停止背景位置追蹤任務
-                    backgroundLocationService.stopBackgroundTracking();
-                  }}
-                >
-                  <Ionicons name="car-outline" size={24} color="#FFFFFF" />
-                </AnimatedTouchableOpacity>
-                <AnimatedTouchableOpacity
-                  style={[
-                    styles.sideToolButton,
-                    styles.picnicToolButton,
-                    { transform: [{ scale: picnicButtonScale }] }
-                  ]}
-                  onPressIn={() => {
-                    Animated.spring(picnicButtonScale, {
-                      toValue: 0.9,
-                      useNativeDriver: true,
-                    }).start();
-                  }}
-                  onPressOut={() => {
-                    Animated.spring(picnicButtonScale, {
-                      toValue: 1,
-                      useNativeDriver: true,
-                    }).start();
-                  }}
-                  onPress={async () => {
-                    await gpsHistoryService.endSession('picnic');
-                    setIsCollecting(false);
-                    const sessions = gpsHistoryService.getAllSessions();
-                    setAllSessions(sessions);
-                    console.log('[GameScreen] Ended collection session: picnic');
-                    // 停止背景定位通知
-                    bgTrackingNotification.stopTracking();
-                    // ⭐ 關鍵：停止背景位置追蹤任務
-                    backgroundLocationService.stopBackgroundTracking();
-                  }}
-                >
-                  <Ionicons name="restaurant-outline" size={24} color="#FFFFFF" />
-                </AnimatedTouchableOpacity>
-              </>
-            )}
-          </View>
-
-          {/* 底部中央主按鈕（Scanner） */}
-          <View style={styles.scanButtonContainer}>
-            <AnimatedTouchableOpacity
-              style={[
-                styles.scanButton,
-                isCollecting && styles.scanButtonActive,
-                { transform: [{ scale: scanButtonScale }] }
-              ]}
-              onPressIn={() => {
-                Animated.spring(scanButtonScale, {
-                  toValue: 0.9,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(scanButtonScale, {
-                  toValue: 1,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                if (!isCollecting) {
-                  // ⭐ 清空之前會話的新 H3（如果有的話）
-                  const { useSessionStore } = require('../../src/stores/sessionStore');
-                  const store = useSessionStore.getState();
-                  if (store.clearCurrentSessionHexes) {
-                    store.clearCurrentSessionHexes();
-                  }
-                  
-                  const sessionId = await gpsHistoryService.startSession();
-                  console.log('[GameScreen] Started collection session:', sessionId);
-                  setIsCollecting(true);
-                  // 啟動背景定位通知
-                  bgTrackingNotification.startTracking();
-                  // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
-                  backgroundLocationService.startBackgroundTracking().then((success) => {
-                    if (success) {
-                      console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
-                    } else {
-                      console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
-                    }
-                  });
-                } else {
-                  // ⭐ 防崩潰修復：停止採集時的強制重置
-                  console.log('[GameScreen] 🧹 開始清理採集資源...');
-                  
-                  // 1. 停止背景位置追蹤任務（優先停止，避免繼續產生事件）
-                  backgroundLocationService.stopBackgroundTracking().then(() => {
-                    console.log('[GameScreen] ✅ 背景位置追蹤任務已停止');
-                  }).catch((error) => {
-                    console.warn('[GameScreen] ⚠️  停止背景位置追蹤任務時出錯:', error);
-                  });
-                  
-                  // 2. 停止背景定位通知
-                  bgTrackingNotification.stopTracking();
-                  
-                  // 3. 結束會話（會自動清理會話數據）
-                  await gpsHistoryService.endSession('manual');
-                  
-                  // 4. 更新狀態
-                  setIsCollecting(false);
-                  const sessions = gpsHistoryService.getAllSessions();
-                  setAllSessions(sessions);
-                  
-                  console.log('[GameScreen] ✅ 採集資源清理完成');
-                }
-              }}
-            >
-              <Ionicons 
-                name={isCollecting ? "stop-circle" : "radio-button-on"} 
-                size={32} 
-                color="#FFFFFF" 
-              />
-            </AnimatedTouchableOpacity>
-        </View>
-        </>
-      )}
-
-      {/* ========== 模擬器模式的採集控制按鈕 ========== */}
-      {isReady && isSimulatorMode && (
-        <SafeAreaView style={styles.controlOverlay} pointerEvents="box-none">
-          <View style={styles.controlContainer}>
-            {!isCollecting ? (
-          <TouchableOpacity
-                style={[styles.actionButton, styles.startButton]}
-                onPress={async () => {
-                  // ⭐ 清空之前會話的新 H3（如果有的話）
-                  const { useSessionStore } = require('../../src/stores/sessionStore');
-                  const store = useSessionStore.getState();
-                  if (store.clearCurrentSessionHexes) {
-                    store.clearCurrentSessionHexes();
-                  }
-                  
-                  const sessionId = await gpsHistoryService.startSession();
-                  console.log('[GameScreen] Started collection session (simulator):', sessionId);
-                  setIsCollecting(true);
-                  // 啟動背景定位通知
-                  bgTrackingNotification.startTracking();
-                  // ⭐ 關鍵：啟動背景位置追蹤任務（Task Manager）
-                  backgroundLocationService.startBackgroundTracking().then((success) => {
-                    if (success) {
-                      console.log('[GameScreen] ✅ 背景位置追蹤已啟動');
-                    } else {
-                      console.warn('[GameScreen] ⚠️ 背景位置追蹤啟動失敗');
-                    }
-                  });
-                }}
-              >
-                <Text style={styles.buttonText}>▶ 開始採集</Text>
-          </TouchableOpacity>
-            ) : (
-              <View style={styles.endButtonContainer}>
-          <TouchableOpacity
-                  style={[styles.actionButton, styles.endButton, styles.picnicButton]}
-                  onPress={async () => {
-                    await gpsHistoryService.endSession('picnic');
-                    setIsCollecting(false);
-                    const sessions = gpsHistoryService.getAllSessions();
-                    setAllSessions(sessions);
-                    console.log('[GameScreen] Ended collection session (simulator): picnic');
-                    // 停止背景定位通知
-                    bgTrackingNotification.stopTracking();
-                    // ⭐ 關鍵：停止背景位置追蹤任務
-                    backgroundLocationService.stopBackgroundTracking();
-                  }}
-                >
-                  <Text style={styles.buttonText}>🍽️ 就地野餐</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-                  style={[styles.actionButton, styles.endButton, styles.unloadButton]}
-                  onPress={async () => {
-                    await gpsHistoryService.endSession('unload');
-                    setIsCollecting(false);
-                    const sessions = gpsHistoryService.getAllSessions();
-                    setAllSessions(sessions);
-                    console.log('[GameScreen] Ended collection session (simulator): unload');
-                    // 停止背景定位通知
-                    bgTrackingNotification.stopTracking();
-                    // ⭐ 關鍵：停止背景位置追蹤任務
-                    backgroundLocationService.stopBackgroundTracking();
-                  }}
-                >
-                  <Text style={styles.buttonText}>🏪 餐廳卸貨</Text>
-          </TouchableOpacity>
-        </View>
-            )}
-          </View>
+      {/* ========== 頂部狀態欄 ========== */}
+      {isReady && !showHistoryTrail && (
+        <SafeAreaView style={styles.topBarContainer} pointerEvents="box-none">
+          <TopStaminaBar onSettingsPress={() => setShowDevDashboard(!showDevDashboard)} />
         </SafeAreaView>
       )}
 
-      {/* 歷史軌跡彈窗（Modal） */}
+      {/* ========== 右下角背包卡片 ========== */}
+      {isReady && !showHistoryTrail && (
+        <View style={styles.backpackContainer} pointerEvents="box-none">
+          <BackpackCard onPress={() => console.log('打開背包詳情')} />
+        </View>
+      )}
+
+      {/* ========== 左側工具欄 ========== */}
+      {isReady && !showHistoryTrail && (
+        <View style={styles.leftToolbarContainer} pointerEvents="box-none">
+          <LeftToolbar
+            sessionCount={allSessions.length}
+            consumableCount={consumableCount}
+            isCollecting={gameState === 'COLLECTING'}
+            followMode="NONE"
+            onShowHistory={handleShowHistory}
+            onRecenterMap={handleRecenterMap}
+            onQuickConsume={handleQuickConsume}
+          />
+        </View>
+      )}
+
+      {/* ========== 底部主按鈕 ========== */}
+      {isReady && !showHistoryTrail && (
+        <View style={styles.bottomActionContainer} pointerEvents="box-none">
+          <MainActionButton
+            gameState={gameState}
+            isBackpackFull={isBackpackFull}
+            onStartShift={handleStartShift}
+            onUnload={handleUnload}
+            onPicnic={handlePicnic}
+          />
+        </View>
+      )}
+
+      {/* ========== 開發者控制台 ========== */}
+      {isReady && showDevDashboard && !showHistoryTrail && (
+        <DevDashboard visible={showDevDashboard} />
+      )}
+
+      {/* ========== 飄字系統 ========== */}
+      <FloatingTextSystem texts={floatingTexts} onRemove={removeText} />
+
+      {/* ========== 救援彈窗 ========== */}
+      <RescueModal
+        visible={rescueModalVisible}
+        type={rescueType}
+        title={rescueTitle}
+        desc={rescueDesc}
+        reward={rescueReward}
+        onAdSuccess={handleAdSuccess}
+        onCancel={handleAdCancel}
+      />
+
+      {/* ========== 歷史軌跡彈窗 ========== */}
       <Modal
         visible={showHistoryTrail}
         animationType="slide"
@@ -523,22 +502,27 @@ export default function GameScreen() {
                 <Text style={styles.modalCloseText}>✕ 關閉</Text>
           </TouchableOpacity>
               <Text style={styles.modalTitle}>歷史軌跡 ({allSessions.length})</Text>
-            </View>
+        </View>
 
             {/* 會話列表 */}
             <ScrollView style={styles.modalSessionList}>
               {allSessions.map((session) => {
                 const date = new Date(session.startTime);
-                const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-                const durationStr = session.duration 
-                  ? `${Math.floor(session.duration / 60)}:${Math.floor(session.duration % 60).toString().padStart(2, '0')}`
+                const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date
+                  .getHours()
+                  .toString()
+                  .padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+                const durationStr = session.duration
+                  ? `${Math.floor(session.duration / 60)}:${Math.floor(session.duration % 60)
+                      .toString()
+                      .padStart(2, '0')}`
                   : '進行中';
                 return (
           <TouchableOpacity
                     key={session.sessionId}
                     style={[
                       styles.modalSessionItem,
-                      selectedSessionId === session.sessionId && styles.modalSessionItemActive
+                      selectedSessionId === session.sessionId && styles.modalSessionItemActive,
                     ]}
                     onPress={() => {
                       setSelectedSessionId(session.sessionId);
@@ -547,7 +531,11 @@ export default function GameScreen() {
                     <Text style={styles.modalSessionDate}>{dateStr}</Text>
                     <Text style={styles.modalSessionInfo}>
                       {session.totalDistance.toFixed(2)} km · {durationStr}
-                      {session.endType === 'picnic' ? ' · 🍽️ 就地野餐' : session.endType === 'unload' ? ' · 🏪 餐廳卸貨' : ''}
+                      {session.endType === 'picnic'
+                        ? ' · 🍽️ 就地野餐'
+                        : session.endType === 'unload'
+                        ? ' · 🏪 餐廳卸貨'
+                        : ''}
                     </Text>
           </TouchableOpacity>
                 );
@@ -559,7 +547,7 @@ export default function GameScreen() {
               <>
                 {/* 軌跡統計面板 */}
                 {(() => {
-                  const session = allSessions.find(s => s.sessionId === selectedSessionId);
+                  const session = allSessions.find((s) => s.sessionId === selectedSessionId);
                   if (session && session.points && session.points.length > 0) {
                     return (
                       <View style={styles.modalStatsContainer}>
@@ -569,11 +557,9 @@ export default function GameScreen() {
                   }
                   return null;
                 })()}
-                
+
                 <View style={styles.modalMapContainer}>
-                  <RealTimeMap
-                    showTrail={true}
-                    height={Dimensions.get('window').height * 0.5} // 佔用一半螢幕高度
+                  <UnifiedMap
                     isCollecting={false}
                     selectedSessionId={selectedSessionId}
                     showHistoryTrail={true}
@@ -593,51 +579,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     height: '100%',
-    backgroundColor: '#0A0A0A', // 深色背景
-  },
-  modeSwitchContainer: {
-    position: 'absolute',
-    top: 8,  // 稍微下移，避免完全貼邊
-    left: 8,
-    right: 8,
-    zIndex: 2000, // 提高 zIndex，確保在 DevDashboard 上方
-    pointerEvents: 'box-none',
-  },
-  modeSwitch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',  // 改為左對齊，放在左側
-    paddingVertical: 4,  // 減少 padding
-    paddingHorizontal: 8,  // 減少 padding
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',  // 稍微透明
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  modeLabel: {
-    fontSize: 10,  // 縮小字體
-    fontWeight: '500',
-    color: '#FFFFFF',
-    marginHorizontal: 4,  // 減少間距
-  },
-  // 縮小的 Switch 樣式
-  modeSwitchWrapper: {
-    transform: [{ scale: 0.75 }],  // 縮小到 75%
-  },
-  // 開發者控制台開關（縮小版）
-  devToggleButtonMini: {
-    marginLeft: 6,
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  devToggleTextMini: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '600',
+    backgroundColor: '#0A0A0A',
   },
   mapWrapper: {
     position: 'absolute',
@@ -647,40 +589,32 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: '100%',
     height: '100%',
-    backgroundColor: '#1A1A1A', // 深色地圖背景
+    backgroundColor: '#1A1A1A',
   },
-  // 左側功能工具列
-  sideToolbar: {
+  // ========== UI 容器 ==========
+  topBarContainer: {
     position: 'absolute',
-    left: 16,
-    bottom: 180, // 在羅盤按鈕上方
-    flexDirection: 'column',
-    gap: 12,
+    top: 12,
+    left: 12,
+    right: 12,
+    zIndex: 2000,
+    pointerEvents: 'box-none',
+  },
+  backpackContainer: {
+    position: 'absolute',
+    bottom: 140,
+    right: 12,
     zIndex: 1000,
+    pointerEvents: 'box-none',
   },
-  sideToolButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 5,
+  leftToolbarContainer: {
+    position: 'absolute',
+    left: 12,
+    bottom: 140,
+    zIndex: 1000,
+    pointerEvents: 'box-none',
   },
-  unloadToolButton: {
-    backgroundColor: 'rgba(33, 150, 243, 0.7)', // 半透明藍色
-  },
-  picnicToolButton: {
-    backgroundColor: 'rgba(255, 152, 0, 0.7)', // 半透明橙色
-  },
-  // 底部中央主按鈕（Scanner）
-  scanButtonContainer: {
+  bottomActionContainer: {
     position: 'absolute',
     bottom: 32,
     left: 0,
@@ -689,136 +623,7 @@ const styles = StyleSheet.create({
     zIndex: 1000,
     pointerEvents: 'box-none',
   },
-  scanButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#FFB300', // 黃色/橙色
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#FFB300',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 8,
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-  },
-  scanButtonActive: {
-    backgroundColor: '#F44336', // 紅色：停止採集
-    shadowColor: '#F44336',
-  },
-  controlOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    pointerEvents: 'box-none',
-  },
-  controlContainer: {
-    padding: 16,
-    paddingBottom: 32,
-    alignItems: 'center',
-  },
-  startButtonContainer: {
-    width: '100%',
-    maxWidth: 400,
-    gap: 12,
-    alignItems: 'center',
-  },
-  actionButton: {
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    minWidth: 200,
-    width: '100%',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  startButton: {
-    backgroundColor: '#4CAF50', // 綠色：開始
-  },
-  historyButton: {
-    backgroundColor: '#9C27B0', // 紫色：歷史軌跡
-  },
-  endButtonContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    width: '100%',
-    maxWidth: 400,
-    justifyContent: 'center',
-  },
-  endButton: {
-    flex: 1,
-    minWidth: 140,
-  },
-  picnicButton: {
-    backgroundColor: '#FF9800', // 橙色：就地野餐
-  },
-  unloadButton: {
-    backgroundColor: '#2196F3', // 藍色：餐廳卸貨
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  historyContainer: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    borderRadius: 12,
-    padding: 16,
-    maxHeight: 300,
-  },
-  historyHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  closeHistoryButton: {
-    padding: 8,
-  },
-  closeHistoryText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  historyTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  sessionList: {
-    gap: 8,
-  },
-  sessionItem: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  sessionItemActive: {
-    backgroundColor: 'rgba(76, 175, 80, 0.3)',
-    borderColor: '#4CAF50',
-  },
-  sessionDate: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  sessionInfo: {
-    color: '#B0B0B0',
-    fontSize: 12,
-  },
-  // 歷史軌跡彈窗樣式
+  // ========== 歷史軌跡彈窗樣式 ==========
   modalContainer: {
     flex: 1,
     backgroundColor: '#0A0A0A',
@@ -886,28 +691,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  // 開發者控制台樣式
-  devToggleButton: {
-    marginLeft: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  devToggleText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  devDashboardOverlay: {
-    position: 'absolute',
-    top: 100, // 調整位置，確保不擋住頂部按鈕
-    left: 16,
-    right: 16,
-    zIndex: 1000, // 低於頂部按鈕的 zIndex (2000)
-    pointerEvents: 'box-none',
   },
 });

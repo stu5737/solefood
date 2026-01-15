@@ -195,6 +195,62 @@ const fallbackH3Module = {
     // 如果不是 fallback 格式或分辨率不匹配，返回空數組
     return [];
   },
+  gridPathCells: (startHex: string, endHex: string) => {
+    // ⭐ 降級實現：在兩個 H3 格子之間進行線性插值
+    // 這個函數用於填補 GPS 軌跡點之間的 H3 格子，確保連續性
+    try {
+      // 獲取起點和終點的座標
+      const startCoords = fallbackH3Module.cellToLatLng(startHex);
+      const endCoords = fallbackH3Module.cellToLatLng(endHex);
+      
+      if (!startCoords || !endCoords) {
+        return [startHex, endHex];
+      }
+      
+      const [startLat, startLng] = startCoords;
+      const [endLat, endLng] = endCoords;
+      
+      // 計算兩點之間的距離（使用簡化的歐幾里得距離）
+      const latDiff = endLat - startLat;
+      const lngDiff = endLng - startLng;
+      const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
+      
+      // 如果距離太小，直接返回起點和終點
+      if (distance < 0.0001) {
+        return [startHex, endHex];
+      }
+      
+      // 計算需要多少個插值點（基於 H3 Resolution 11 的格子大小）
+      // Res 11 的格子邊長約 0.000225 度，我們每 0.0001 度插入一個點
+      const numSteps = Math.ceil(distance / 0.0001);
+      
+      // 限制插值點數量，避免性能問題
+      const maxSteps = Math.min(numSteps, 100);
+      
+      // 使用 Set 來存儲唯一的 H3 格子
+      const hexSet = new Set<string>();
+      hexSet.add(startHex);
+      
+      // 在起點和終點之間進行線性插值
+      for (let i = 1; i < maxSteps; i++) {
+        const t = i / maxSteps;
+        const interpLat = startLat + latDiff * t;
+        const interpLng = startLng + lngDiff * t;
+        
+        // 將插值點轉換為 H3 格子
+        const interpHex = fallbackH3Module.latLngToCell(interpLat, interpLng, H3_RESOLUTION);
+        hexSet.add(interpHex);
+      }
+      
+      hexSet.add(endHex);
+      
+      // 返回唯一的 H3 格子陣列
+      return Array.from(hexSet);
+    } catch (error) {
+      console.error('[H3] gridPathCells fallback failed:', error);
+      return [startHex, endHex];
+    }
+  },
 };
 
 async function getH3Module() {
@@ -408,13 +464,17 @@ export function getH3GridPath(
       return h3.gridPathCells(startHex, endHex);
     }
     
-    // 降級方案：返回起點和終點
-    console.warn('[H3] gridPathCells not available, using fallback');
-    return [startHex, endHex];
+    // 降級方案：使用 fallback 模組的線性插值實現
+    return fallbackH3Module.gridPathCells(startHex, endHex);
   } catch (error) {
-    // 距離太遠或計算失敗
+    // 距離太遠或計算失敗，使用 fallback
     console.error('[H3] Grid path calculation failed:', error);
-    return [startHex, endHex];
+    try {
+      return fallbackH3Module.gridPathCells(startHex, endHex);
+    } catch (fallbackError) {
+      console.error('[H3] Fallback gridPathCells also failed:', fallbackError);
+      return [startHex, endHex];
+    }
   }
 }
 

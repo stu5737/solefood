@@ -102,11 +102,19 @@ interface InventoryActions {
   addTestItem: (tier: ItemTier) => boolean;
 
   /**
-   * 添加隨機物品（用於測試）
+   * 添加隨機物品（用於測試或實際遊戲）
    * 
+   * @param options - 可選配置
+   * @param options.pathfinderBonus - 開拓者紅利加成（T2 掉落率加成）
+   * @param options.streak - 連續簽到天數
+   * @param options.isInDeepZone - 是否在深層領域
    * @returns 添加的物品或 null
    */
-  addRandomItem: () => Item | null;
+  addRandomItem: (options?: {
+    pathfinderBonus?: number;
+    streak?: number;
+    isInDeepZone?: boolean;
+  }) => Item | null;
 }
 
 type InventoryStore = InventoryState & InventoryActions;
@@ -427,18 +435,76 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   },
 
   /**
-   * 添加隨機物品（用於測試）
+   * 添加隨機物品（用於測試或實際遊戲）
+   * 🆕 Phase 2：整合開拓者紅利到掉落率計算
    * 
+   * @param options - 可選配置
    * @returns 添加的物品或 null
    */
-  addRandomItem: (): Item | null => {
-    // 根據分布隨機生成階層（85/14/1）
+  addRandomItem: (options?: {
+    pathfinderBonus?: number;
+    streak?: number;
+    isInDeepZone?: boolean;
+  }): Item | null => {
+    const { pathfinderBonus = 0, streak = 0, isInDeepZone = false } = options || {};
+    
+    // ✅ 診斷 Log 3：函數調用參數
+    console.log('🔍 [診斷] addRandomItem 調用', {
+      pathfinderBonus,
+      streak,
+      isInDeepZone,
+      hasOptions: !!options,
+    });
+    
+    // 🎲 使用動態掉落率計算（考慮開拓者紅利）
+    const { calculateItemDropRate } = require('../core/math/luck');
+    const { useSessionStore } = require('./sessionStore');
+    
+    // 獲取當前 T2 機率（考慮衰減）
+    const sessionState = useSessionStore.getState();
+    const currentT2Chance = sessionState.luckGradient?.currentT2Chance;
+    
+    // 是否為開拓者區域（有紅利加成）
+    const isPathfinder = pathfinderBonus > 0;
+    
+    // 計算實際掉落率
+    const t1Rate = calculateItemDropRate(1, streak, isPathfinder, isInDeepZone, currentT2Chance);
+    const t2Rate = calculateItemDropRate(2, streak, isPathfinder, isInDeepZone, currentT2Chance);
+    const t3Rate = calculateItemDropRate(3, streak, isPathfinder, isInDeepZone);
+    
+    console.log('🎲 [掉落率計算]', {
+      開拓者紅利: pathfinderBonus > 0 ? `+${pathfinderBonus}%` : '無',
+      T1機率: `${t1Rate.toFixed(1)}%`,
+      T2機率: `${t2Rate.toFixed(1)}%`,
+      T3機率: `${t3Rate.toFixed(1)}%`,
+    });
+    
+    // ✅ 診斷 Log 4：掉落率計算詳細
+    console.log('🔍 [診斷] 掉落率詳細計算', {
+      輸入參數: {
+        pathfinderBonus,
+        isPathfinder,
+        streak,
+        isInDeepZone,
+        currentT2Chance,
+      },
+      計算結果: {
+        T1: `${t1Rate.toFixed(1)}%`,
+        T2: `${t2Rate.toFixed(1)}%`,
+        T3: `${t3Rate.toFixed(1)}%`,
+      },
+      預期T2: isPathfinder ? '24.0%' : '14.0%',
+      實際T2: `${t2Rate.toFixed(1)}%`,
+      是否匹配: isPathfinder ? (t2Rate >= 23 && t2Rate <= 25) : (t2Rate >= 13 && t2Rate <= 15),
+    });
+    
+    // 根據計算的機率隨機生成階層
     const rand = Math.random() * 100;
     let tier: ItemTier;
     
-    if (rand < ITEM_DISTRIBUTION.T1_PERCENTAGE) {
+    if (rand < t1Rate) {
       tier = 1;
-    } else if (rand < ITEM_DISTRIBUTION.T1_PERCENTAGE + ITEM_DISTRIBUTION.T2_PERCENTAGE) {
+    } else if (rand < t1Rate + t2Rate) {
       tier = 2;
     } else {
       tier = 3;

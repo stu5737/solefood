@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.0",
+    "@rnmapbox/maps": "^10.2.10",
     "expo": "~54.0.0",
     "expo-constants": "~18.0.12",
+    "expo-haptics": "~15.0.8",
     "expo-image-picker": "~17.0.10",
     "expo-linking": "~8.0.0",
     "expo-location": "~19.0.8",
@@ -29,6 +31,7 @@
     "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
     "tailwindcss": "^4.1.18",
     "zustand": "^4.5.0"

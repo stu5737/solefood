@@ -14,8 +14,7 @@ import { locationService } from '../../services/location';
 import { gpsHistoryService, CollectionSession, GPSHistoryPoint } from '../../services/gpsHistory';
 import { explorationService } from '../../services/exploration';
 import { entropyEngine } from '../../core/entropy/engine';
-import { latLngToH3, H3_RESOLUTION, getH3CellBoundary, h3ToLatLng } from '../../core/math/h3';
-import { gridPathCells } from '../../core/math/h3';
+import { latLngToH3, H3_RESOLUTION, getH3CellBoundary, h3ToLatLng, getH3GridPath } from '../../core/math/h3';
 import { useSessionStore } from '../../stores/sessionStore';
 import { UserMarker } from './UserMarker';
 import LivePath from './LivePath';
@@ -230,7 +229,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       try {
         const h3Start = latLngToH3(points[i].latitude, points[i].longitude, H3_RESOLUTION);
         const h3End = latLngToH3(points[i + 1].latitude, points[i + 1].longitude, H3_RESOLUTION);
-        const gridPath = gridPathCells(h3Start, h3End);
+        const gridPath = getH3GridPath(h3Start, h3End);
         gridPath.forEach(hex => hexes.add(hex));
       } catch (error) {
         console.warn('[RealTimeMap] Failed to interpolate H3 path:', error);
@@ -960,8 +959,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           const { latLngToH3, H3_RESOLUTION } = require('../../core/math/h3');
           const h3Index = latLngToH3(location.latitude, location.longitude, H3_RESOLUTION);
           if (h3Index) {
-            const isNew = discoverNewHex(h3Index);
-            if (isNew) {
+            // ✅ Phase 1 修復：使用新的返回值格式
+            const explorationStatus = discoverNewHex(h3Index);
+            if (explorationStatus.hasNewDiscovery) {
               console.log('[RealTimeMap] 🎯 New territory discovered:', h3Index);
             }
           }
@@ -1480,15 +1480,50 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         })()}
       </MapView>
 
-      {/* 實時信息覆蓋層（只在主遊戲模式顯示） */}
+      {/* 實時信息覆蓋層（只在主遊戲模式顯示）- 現代化設計 */}
       {actualMapMode === 'GAME' && currentLocation && (
-        <View style={styles.infoOverlay}>
-          <Text style={styles.infoText}>
-            {currentLocation.speed ? (currentLocation.speed * 3.6).toFixed(1) : '0.0'} km/h
-          </Text>
-          <Text style={styles.infoSubText}>
-            Total: {totalDistance.toFixed(2)} km
-          </Text>
+        <View style={styles.infoOverlayModern}>
+          {/* 速度卡片 */}
+          <View style={[
+            styles.speedCard,
+            { 
+              borderColor: !currentLocation.speed ? 'rgba(150, 150, 150, 0.5)' :
+                currentLocation.speed * 3.6 > 50 ? 'rgba(255, 82, 82, 0.6)' :
+                currentLocation.speed * 3.6 > 20 ? 'rgba(255, 165, 0, 0.6)' :
+                'rgba(76, 175, 80, 0.6)'
+            }
+          ]}>
+            <View style={styles.speedIconContainer}>
+              <Text style={styles.speedEmoji}>
+                {!currentLocation.speed ? '🚶' :
+                 currentLocation.speed * 3.6 > 50 ? '🚗' :
+                 currentLocation.speed * 3.6 > 20 ? '🏃' :
+                 '🚶'}
+              </Text>
+            </View>
+            <View style={styles.speedContent}>
+              <Text style={[
+                styles.speedValue,
+                { 
+                  color: !currentLocation.speed ? '#888888' :
+                    currentLocation.speed * 3.6 > 50 ? '#FF5252' :
+                    currentLocation.speed * 3.6 > 20 ? '#FFA500' :
+                    '#4CAF50'
+                }
+              ]}>
+                {currentLocation.speed ? (currentLocation.speed * 3.6).toFixed(1) : '0.0'}
+              </Text>
+              <Text style={styles.speedUnit}>km/h</Text>
+            </View>
+          </View>
+          
+          {/* 距離徽章 */}
+          <View style={styles.distanceBadge}>
+            <Text style={styles.distanceIcon}>📍</Text>
+            <Text style={styles.distanceText}>
+              {totalDistance.toFixed(2)} km
+            </Text>
+          </View>
         </View>
       )}
 
@@ -1560,31 +1595,81 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: 'transparent',
   },
-  infoOverlay: {
+  // ⭐ 現代化速度顯示樣式 - 優化版（避免被頂部按鈕擋住）
+  infoOverlayModern: {
     position: 'absolute',
-    top: 60,  // 調整位置，避免被縮小的模式切換按鈕擋住
+    top: 110,  // 從 70 改為 110，避開頂部按鈕區域
     left: 0,
     right: 0,
-    alignItems: 'center',  // 居中對齊
-    backgroundColor: 'transparent',
-    paddingVertical: 8,
+    alignItems: 'center',
+    zIndex: 50,
     paddingHorizontal: 16,
   },
-  infoText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#4CAF50',  // 亮綠色，符合深色主題
-    fontFamily: 'monospace',
-    textAlign: 'center',
+  speedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 20, 20, 0.92)',
+    paddingVertical: 8,  // 從 10 縮小到 8，更緊湊
+    paddingHorizontal: 12,  // 從 14 縮小到 12
+    borderRadius: 18,  // 從 20 縮小到 18
+    borderWidth: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },  // 稍微降低陰影
+    shadowOpacity: 0.25,  // 從 0.3 降低到 0.25
+    shadowRadius: 6,  // 從 8 降低到 6
+    elevation: 6,  // 從 8 降低到 6
+    minWidth: 130,  // 從 140 縮小到 130
   },
-  infoSubText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#E0E0E0',  // 淺灰色，較小字體
+  speedIconContainer: {
+    width: 28,  // 從 32 縮小到 28
+    height: 28,  // 從 32 縮小到 28
+    borderRadius: 14,  // 從 16 縮小到 14
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,  // 從 10 縮小到 8
+  },
+  speedEmoji: {
+    fontSize: 16,  // 從 18 縮小到 16
+  },
+  speedContent: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
+  },
+  speedValue: {
+    fontSize: 24,  // 從 28 縮小到 24
+    fontWeight: '800',
     fontFamily: 'monospace',
-    textAlign: 'center',
-    marginTop: 2,
-    opacity: 0.8,
+    letterSpacing: -0.5,  // 從 -1 調整到 -0.5
+  },
+  speedUnit: {
+    fontSize: 11,  // 從 12 縮小到 11
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontFamily: 'monospace',
+    marginBottom: 2,
+  },
+  distanceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(76, 175, 80, 0.25)',
+    paddingVertical: 4,  // 從 6 縮小到 4
+    paddingHorizontal: 10,  // 從 12 縮小到 10
+    borderRadius: 14,  // 從 16 縮小到 14
+    marginTop: 6,  // 從 8 縮小到 6
+    borderWidth: 1,
+    borderColor: 'rgba(76, 175, 80, 0.4)',
+  },
+  distanceIcon: {
+    fontSize: 11,  // 從 12 縮小到 11
+    marginRight: 4,
+  },
+  distanceText: {
+    fontSize: 11,  // 從 12 縮小到 11
+    fontWeight: '700',
+    color: '#4CAF50',
+    fontFamily: 'monospace',
   },
   // ⭐ 移除：自定義縮放控制按鈕樣式（已改用原生縮放控制）
   // 歸位按鈕樣式

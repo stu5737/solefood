@@ -1019,9 +1019,26 @@ export const useSessionStore = create<SessionStore>()(
    * @param hexIndex - H3 索引
    * @returns 是否為新發現的區域
    */
-  discoverNewHex: (hexIndex: string) => {
+  discoverNewHex: (hexIndex: string): {
+    hasNewDiscovery: boolean;
+    isGrayZone: boolean;
+    explorationDetails: {
+      newHexes: string[];
+      historicalHexes: string[];
+      currentHexes: string[];
+    };
+    pathfinderBonus: {
+      active: boolean;
+      t2DropRateBonus: number;
+    };
+  } => {
     if (!hexIndex) {
-      return false;
+      return {
+        hasNewDiscovery: false,
+        isGrayZone: false,
+        explorationDetails: { newHexes: [], historicalHexes: [], currentHexes: [] },
+        pathfinderBonus: { active: false, t2DropRateBonus: 0 }
+      };
     }
     
     const state = get();
@@ -1029,11 +1046,23 @@ export const useSessionStore = create<SessionStore>()(
     
     // ⚡️ 如果是同一個格子，直接跳過（效能優化）
     if (hexIndex === lastKnownHex) {
-      return false;
+      return {
+        hasNewDiscovery: false,
+        isGrayZone: false,
+        explorationDetails: { newHexes: [], historicalHexes: [], currentHexes: [] },
+        pathfinderBonus: { active: false, t2DropRateBonus: 0 }
+      };
     }
     
     const newCurrentSessionHexes = new Set(currentSessionNewHexes);
     let hasNewDiscoveries = false;
+    
+    // 📊 追蹤探索詳情
+    const explorationDetails = {
+      newHexes: [] as string[],
+      historicalHexes: [] as string[],
+      currentHexes: [] as string[]
+    };
     
     // ⚡️ 核心邏輯：路徑補間 (Grid Path Interpolation)
     if (lastKnownHex) {
@@ -1049,34 +1078,96 @@ export const useSessionStore = create<SessionStore>()(
           
           // 將路徑上所有格子加入
           pathCells.forEach((cell: string) => {
-            if (!exploredHexes.has(cell) && !currentSessionNewHexes.has(cell)) {
+            const isHistorical = exploredHexes.has(cell);
+            const isCurrentSession = currentSessionNewHexes.has(cell);
+            
+            if (!isHistorical && !isCurrentSession) {
+              // ✅ 新探索的 H3（Gray Zone）
               newCurrentSessionHexes.add(cell);
               hasNewDiscoveries = true;
+              explorationDetails.newHexes.push(cell);
+              
+              console.log('🆕 [開拓者] 發現未探索區域！', {
+                h3Index: cell.substring(0, 10) + '...',
+                類型: '🌫️ Gray Zone',
+                獎勵: '✨ T2 掉落率 +10%',
+                action: '顯示綠色方框'
+              });
+            } else if (isHistorical) {
+              // ⏪ 走到歷史 H3
+              explorationDetails.historicalHexes.push(cell);
+              
+              console.log('🔄 [重訪] 已探索區域', {
+                h3Index: cell.substring(0, 10) + '...',
+                類型: '📍 Explored',
+                獎勵: '無加成',
+                action: '不顯示方框'
+              });
+            } else {
+              // 🔁 當前會話已經走過
+              explorationDetails.currentHexes.push(cell);
+              
+              console.log('🔁 [當前] 會話內移動', {
+                h3Index: cell.substring(0, 10) + '...',
+                類型: '🔁 Current',
+                獎勵: '無加成',
+                action: '不重複顯示'
+              });
             }
           });
           
-          console.log('[SessionStore] 🎯 Path interpolation:', {
-            from: lastKnownHex,
-            to: hexIndex,
+          console.log('[SessionStore] 🎯 開拓者判定總結:', {
+            from: lastKnownHex.substring(0, 10) + '...',
+            to: hexIndex.substring(0, 10) + '...',
             pathLength: pathCells.length,
-            newHexes: pathCells.filter((c: string) => !exploredHexes.has(c) && !currentSessionNewHexes.has(c)).length
+            新探索: explorationDetails.newHexes.length,
+            歷史區域: explorationDetails.historicalHexes.length,
+            當前會話: explorationDetails.currentHexes.length,
+            開拓者紅利: hasNewDiscoveries ? '✅ 啟動' : '❌ 未啟動'
           });
         } else {
           // 降級方案：直接加入當前格子
           console.log('[SessionStore] gridPathCells not available, using fallback');
           
-          if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
+          const isHistorical = exploredHexes.has(hexIndex);
+          const isCurrentSession = currentSessionNewHexes.has(hexIndex);
+          
+          if (!isHistorical && !isCurrentSession) {
             newCurrentSessionHexes.add(hexIndex);
             hasNewDiscoveries = true;
+            explorationDetails.newHexes.push(hexIndex);
+            
+            console.log('🆕 [開拓者] 發現未探索區域！(降級模式)', {
+              h3Index: hexIndex.substring(0, 10) + '...',
+              獎勵: '✨ T2 掉落率 +10%'
+            });
+          } else if (isHistorical) {
+            explorationDetails.historicalHexes.push(hexIndex);
+            console.log('🔄 [重訪] 已探索區域 (降級模式)');
+          } else {
+            explorationDetails.currentHexes.push(hexIndex);
           }
         }
       } catch (error) {
         // 距離太遠（瞬移）或計算失敗，只加當前點
         console.warn('[SessionStore] Grid path calculation failed, using current hex only:', error);
         
-        if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
+        const isHistorical = exploredHexes.has(hexIndex);
+        const isCurrentSession = currentSessionNewHexes.has(hexIndex);
+        
+        if (!isHistorical && !isCurrentSession) {
           newCurrentSessionHexes.add(hexIndex);
           hasNewDiscoveries = true;
+          explorationDetails.newHexes.push(hexIndex);
+          
+          console.log('🆕 [開拓者] 發現未探索區域！(錯誤恢復)', {
+            h3Index: hexIndex.substring(0, 10) + '...',
+            獎勵: '✨ T2 掉落率 +10%'
+          });
+        } else if (isHistorical) {
+          explorationDetails.historicalHexes.push(hexIndex);
+        } else {
+          explorationDetails.currentHexes.push(hexIndex);
         }
       }
     } else {
@@ -1084,15 +1175,50 @@ export const useSessionStore = create<SessionStore>()(
       if (!exploredHexes.has(hexIndex) && !currentSessionNewHexes.has(hexIndex)) {
         newCurrentSessionHexes.add(hexIndex);
         hasNewDiscoveries = true;
+        explorationDetails.newHexes.push(hexIndex);
+        
+        console.log('🆕 [開拓者] 首次探索！', {
+          h3Index: hexIndex.substring(0, 10) + '...',
+          類型: '🎯 起點',
+          獎勵: '✨ T2 掉落率 +10%'
+        });
       }
     }
     
     // 只有真的有新格子才更新 State（減少渲染）
     if (hasNewDiscoveries) {
+      // ✅ 診斷 Log 5：狀態更新前後
+      console.log('🔍 [診斷] discoverNewHex 狀態更新', {
+        更新前: {
+          currentSessionSize: currentSessionNewHexes.size,
+          exploredHexesSize: exploredHexes.size,
+        },
+        更新後: {
+          currentSessionSize: newCurrentSessionHexes.size,
+          新增數量: explorationDetails.newHexes.length,
+          新增H3: explorationDetails.newHexes.map(h => h.substring(0, 10) + '...'),
+        },
+      });
+      
       set({ 
         currentSessionNewHexes: newCurrentSessionHexes,
         lastKnownHex: hexIndex // ⚡️ 更新最後位置
       });
+      
+      // ⭐ 即時驗證：檢查剛添加的 H3 是否正確存在於集合中
+      for (const newHex of explorationDetails.newHexes) {
+        const inCurrentSession = newCurrentSessionHexes.has(newHex);
+        const inExploredHexes = exploredHexes.has(newHex);
+        const isExplored = inExploredHexes || inCurrentSession;
+        
+        console.log('✅ [即時驗證] 新添加的 H3 狀態', {
+          h3Index: newHex.substring(0, 12) + '...',
+          在本次會話: inCurrentSession ? '✅' : '❌',
+          在歷史記錄: inExploredHexes ? '✅' : '❌',
+          Zone判定: isExplored ? '🟢 Explored' : '🌫️ Gray Zone',
+          預期結果: '在本次會話: ✅, Zone判定: 🟢 Explored',
+        });
+      }
       
       // ⭐ 關鍵修復：立即持久化到 AsyncStorage（防止應用重新載入時數據丟失）
       AsyncStorage.setItem(
@@ -1101,13 +1227,29 @@ export const useSessionStore = create<SessionStore>()(
       ).catch(err => {
         console.warn('[SessionStore] ⚠️  Failed to persist current session hexes:', err);
       });
-      
-      return true;
     } else {
       // 即使沒新格子，也要更新最後位置，以便下次計算
       set({ lastKnownHex: hexIndex });
-      return false;
     }
+    
+    // 🎁 開拓者紅利計算
+    const pathfinderBonus = {
+      active: hasNewDiscoveries,
+      t2DropRateBonus: hasNewDiscoveries ? 10 : 0  // +10% T2 掉落率
+    };
+    
+    console.log('🎁 [開拓者紅利]', {
+      狀態: pathfinderBonus.active ? '✅ 啟動' : '❌ 未啟動',
+      T2加成: `+${pathfinderBonus.t2DropRateBonus}%`,
+      新探索數量: explorationDetails.newHexes.length
+    });
+    
+    return {
+      hasNewDiscovery: hasNewDiscoveries,
+      isGrayZone: hasNewDiscoveries,  // Gray Zone = 有新探索
+      explorationDetails,
+      pathfinderBonus
+    };
   },
   
   /**
@@ -1363,6 +1505,43 @@ export const useSessionStore = create<SessionStore>()(
     if (state.currentSessionNewHexes.size > 0) {
       console.log('[SessionStore] Clearing', state.currentSessionNewHexes.size, 'current session new hexes');
       set({ currentSessionNewHexes: new Set<string>() });
+    }
+  },
+  
+  /**
+   * 🧪 測試功能：隨機刪除一半的歷史軌跡（H3 索引 + GPS 會話）
+   * 用於測試開拓者紅利系統
+   */
+  testRandomDeleteHalfHistory: async () => {
+    const state = get();
+    const originalSize = state.exploredHexes.size;
+    
+    // 1. 刪除 H3 索引
+    if (originalSize > 0) {
+      const hexArray = Array.from(state.exploredHexes);
+      const shuffled = hexArray.sort(() => Math.random() - 0.5);
+      const keepCount = Math.floor(originalSize / 2);
+      const newHexes = new Set(shuffled.slice(0, keepCount));
+      
+      set({ exploredHexes: newHexes });
+      
+      console.log('[SessionStore] 🧪 測試：隨機刪除 H3 索引', {
+        原始數量: originalSize,
+        刪除數量: originalSize - keepCount,
+        保留數量: keepCount,
+        當前數量: newHexes.size,
+      });
+    } else {
+      console.log('[SessionStore] 🧪 No H3 history to delete');
+    }
+    
+    // 2. 刪除 GPS 會話（需要動態導入避免循環依賴）
+    try {
+      const { gpsHistoryService } = await import('../services/gpsHistory');
+      const result = await gpsHistoryService.testRandomDeleteHalfSessions();
+      console.log('[SessionStore] 🧪 測試：隨機刪除 GPS 會話', result);
+    } catch (error) {
+      console.error('[SessionStore] ❌ Failed to delete GPS sessions:', error);
     }
   },
     }),

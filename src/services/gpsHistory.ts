@@ -597,6 +597,64 @@ class GPSHistoryService {
       throw error;
     }
   }
+  
+  /**
+   * 🧪 測試功能：隨機刪除一半的歷史會話
+   * 用於測試開拓者紅利系統
+   */
+  async testRandomDeleteHalfSessions(): Promise<{ before: number; after: number; deleted: number }> {
+    const originalSize = this.sessions.size;
+    
+    if (originalSize === 0) {
+      console.log('[GPSHistoryService] 🧪 No sessions to delete');
+      return { before: 0, after: 0, deleted: 0 };
+    }
+    
+    // 將 Map 轉換為數組，隨機打亂順序
+    const sessionsArray = Array.from(this.sessions.entries());
+    const shuffled = sessionsArray.sort(() => Math.random() - 0.5);
+    
+    // 保留前一半
+    const keepCount = Math.floor(originalSize / 2);
+    const toKeep = shuffled.slice(0, keepCount);
+    
+    // 清空並重新填充
+    this.sessions.clear();
+    toKeep.forEach(([id, session]) => {
+      this.sessions.set(id, session);
+    });
+    
+    // 同時更新 history 數組（刪除被刪除會話的所有點）
+    const keptSessionIds = new Set(toKeep.map(([id]) => id));
+    const originalHistorySize = this.history.length;
+    this.history = this.history.filter(point => 
+      !point.sessionId || keptSessionIds.has(point.sessionId)
+    );
+    
+    // 保存到持久化存儲
+    try {
+      await this.saveToStorage();
+      await this.saveSessions();
+      
+      console.log('[GPSHistoryService] 🧪 測試：隨機刪除歷史會話', {
+        原始會話數: originalSize,
+        刪除會話數: originalSize - keepCount,
+        保留會話數: keepCount,
+        當前會話數: this.sessions.size,
+        原始歷史點數: originalHistorySize,
+        當前歷史點數: this.history.length,
+      });
+      
+      return {
+        before: originalSize,
+        after: this.sessions.size,
+        deleted: originalSize - keepCount,
+      };
+    } catch (error) {
+      console.error('[GPSHistoryService] ❌ Failed to save after deletion:', error);
+      throw error;
+    }
+  }
 }
 
 /**

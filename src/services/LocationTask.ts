@@ -212,8 +212,9 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
       // ⭐ 修復：先將座標轉換為 H3 索引，然後調用 discoverNewHex
       const h3Index = latLngToH3(latitude, longitude, H3_RESOLUTION);
       if (h3Index) {
-        const isNew = store.discoverNewHex(h3Index);
-        if (isNew) {
+        // ✅ Phase 1 修復：使用新的返回值格式
+        const explorationStatus = store.discoverNewHex(h3Index);
+        if (explorationStatus.hasNewDiscovery) {
           console.log('[LocationTask] New area discovered:', h3Index);
           // 注意：Toast 通知需要在 UI 層處理（後台任務無法顯示 UI）
         }

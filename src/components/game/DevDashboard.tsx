@@ -121,11 +121,89 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
   const cleanCost = (100 - playerState.hygiene) * HYGIENE.CLEAN_COST_PER_PERCENT;
 
   // ⭐ Module D: 地圖與開拓者
-  const currentH3Index = gpsData.currentLocation 
-    ? latLngToH3(gpsData.currentLocation.latitude, gpsData.currentLocation.longitude, H3_RESOLUTION)
-    : null;
-  const isExplored = currentH3Index ? sessionState.exploredHexes.has(currentH3Index) : false;
-  const isPathfinder = sessionState.pathfinder.isPathfinder;
+  // ✅ 使用 SessionStore 追蹤的 H3 Index，確保與 LocationTask 一致
+  const currentH3Index = sessionState.lastKnownHex || null;
+  // ✅ 修復：同時檢查歷史記錄和本次會話
+  const isExplored = currentH3Index 
+    ? (sessionState.exploredHexes.has(currentH3Index) || sessionState.currentSessionNewHexes.has(currentH3Index))
+    : false;
+  
+  // ✅ 診斷 Log 1：當前 H3 狀態（實時監控）
+  useEffect(() => {
+    if (currentH3Index && visible && isExpanded) {
+      const inExploredHexes = sessionState.exploredHexes.has(currentH3Index);
+      const inCurrentSession = sessionState.currentSessionNewHexes.has(currentH3Index);
+      
+      const currentZoneStatus = getZoneStatus();
+      console.log('🔍 [診斷] 當前 H3 狀態', {
+        h3Index: currentH3Index, // ⭐ 顯示完整 H3 Index
+        在歷史記錄: inExploredHexes ? '✅' : '❌',
+        在本次會話: inCurrentSession ? '✅' : '❌',
+        Zone判定: `${currentZoneStatus.emoji} ${currentZoneStatus.label}`,
+        GPS坐標: gpsData.currentLocation, // ⭐ 診斷用：顯示 GPS 坐標
+      });
+    }
+  }, [
+    currentH3Index, 
+    visible, 
+    isExpanded, 
+    isExplored,  // ⭐ 新增：監聽 isExplored 變化
+    sessionState.currentSessionNewHexes.size,  // ⭐ 新增：監聽本次會話變化
+    sessionState.exploredHexes.size,  // ⭐ 新增：監聽歷史記錄變化
+  ]);
+  
+  // 🆕 Phase 2 修復 v2：根據是否為「7 天歷史區域」判定開拓者紅利
+  // 
+  // 邏輯：只要不在 7 天歷史記錄中（exploredHexes），就給予開拓者紅利
+  // 這包括：
+  // - 即將探索的新區域（Gray Zone）
+  // - 本次會話新探索的區域（Current Session New）
+  // 
+  // 只有「歷史區域」才沒有開拓者紅利，這符合白皮書的設計：
+  // 鼓勵玩家探索「非熟悉區域」，避免時序衝突導致的狀態不一致
+  const isPathfinder = currentH3Index 
+    ? !sessionState.exploredHexes.has(currentH3Index)
+    : false;
+  
+  // ⭐ 細分 Zone State：更清楚地區分三種狀態
+  const getZoneStatus = () => {
+    if (!currentH3Index) return { label: 'Unknown', color: '#666666', emoji: '❓' };
+    
+    const inHistory = sessionState.exploredHexes.has(currentH3Index);
+    const inCurrentSession = sessionState.currentSessionNewHexes.has(currentH3Index);
+    
+    if (inHistory) {
+      // 歷史區域（7 天內探索過）- 無開拓者紅利
+      return { label: 'Historical', color: '#2196F3', emoji: '🔵' };
+    } else if (inCurrentSession) {
+      // 本次新探索（剛探索）- 有開拓者紅利
+      return { label: 'New Discovery', color: '#4CAF50', emoji: '🟢' };
+    } else {
+      // 未探索區域 - 有開拓者紅利
+      return { label: 'Gray Zone', color: '#FFC107', emoji: '🌫️' };
+    }
+  };
+  
+  const zoneStatus = getZoneStatus();
+  
+  // ✅ 診斷 Log 2：開拓者紅利判定（實時監控）
+  useEffect(() => {
+    if (visible && isExpanded) {
+      console.log('🔍 [診斷] 開拓者紅利判定', {
+        isPathfinder: isPathfinder ? '✅ 啟動' : '❌ 未啟動',
+        邏輯: '不在 exploredHexes = 啟動',
+        exploredHexesSize: sessionState.exploredHexes.size,
+        currentSessionSize: sessionState.currentSessionNewHexes.size,
+      });
+    }
+  }, [
+    isPathfinder, 
+    visible, 
+    isExpanded,
+    sessionState.exploredHexes.size,  // ⭐ 新增：監聽歷史記錄變化
+    currentH3Index,  // ⭐ 新增：監聽位置變化
+  ]);
+  
   const isInDeepZone = sessionState.deepZone.isInDeepZone;
 
   // ⭐ Module E: 機率矩陣與物品
@@ -158,11 +236,51 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
     }
   };
 
-  // 添加隨機物品
+  // 添加隨機物品（基礎掉落率）
   const handleAddRandomItem = () => {
     const item = inventoryState.addRandomItem();
     if (item) {
       Alert.alert('物品添加成功', `獲得 T${item.tier} 物品\n重量: ${item.weight}kg\n價值: $${item.value} SOLE`);
+    } else {
+      Alert.alert('添加失敗', '背包已滿或體力不足');
+    }
+  };
+
+  // 🆕 Phase 2：添加隨機物品（開拓者紅利）
+  const handleAddItemWithBonus = () => {
+    // ✅ 診斷 Log 6：測試按鈕調用
+    console.log('🔍 [診斷] 測試按鈕點擊', {
+      currentH3Index: currentH3Index?.substring(0, 12) + '...',
+      在exploredHexes: currentH3Index ? sessionState.exploredHexes.has(currentH3Index) : false,
+      在currentSession: currentH3Index ? sessionState.currentSessionNewHexes.has(currentH3Index) : false,
+    });
+    
+    // ✅ 修復：使用當前位置判定開拓者紅利
+    // 檢查當前 H3 是否為新領域（不在 7 天歷史記錄中）
+    const isCurrentNewArea = currentH3Index 
+      ? !sessionState.exploredHexes.has(currentH3Index)
+      : false;
+    
+    const pathfinderBonus = isCurrentNewArea ? 10 : 0;
+    
+    // ✅ 診斷 Log 7：判定結果
+    console.log('🔍 [診斷] 開拓者紅利計算', {
+      isCurrentNewArea,
+      pathfinderBonus,
+      預期T2機率: isCurrentNewArea ? '24.0%' : '14.0%',
+    });
+    
+    const item = inventoryState.addRandomItem({
+      pathfinderBonus,
+      streak: sessionState.luckGradient.streak,
+      isInDeepZone: sessionState.deepZone.isInDeepZone,
+    });
+    
+    if (item) {
+      Alert.alert(
+        '開拓者掉落測試',
+        `獲得 T${item.tier} 物品\n重量: ${item.weight}kg\n價值: $${item.value} SOLE\n\n當前位置: ${isCurrentNewArea ? '🌫️ 新領域' : '🟢 歷史區域'}\n開拓者紅利: ${pathfinderBonus > 0 ? `✅ +${pathfinderBonus}%` : '❌ 無'}`
+      );
     } else {
       Alert.alert('添加失敗', '背包已滿或體力不足');
     }
@@ -190,19 +308,80 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
 
   if (!visible) return null;
 
-  // ⭐ Mini Mode: 只顯示關鍵指標
+  // ⭐ Mini Mode: 現代化設計
   if (!isExpanded) {
+    // 動態顏色邏輯
+    const speedColor = 
+      !gpsData.speed ? '#666666' :
+      gpsData.speed > 50 ? '#FF5252' :
+      gpsData.speed > 20 ? '#FFA500' :
+      '#4CAF50';
+      
+    const loadColor =
+      loadPercentage >= 90 ? '#FF5252' :
+      loadPercentage >= 70 ? '#FFA500' :
+      '#4CAF50';
+
     return (
       <TouchableOpacity 
-        style={styles.miniContainer}
+        style={styles.miniContainerModern}
         onPress={() => setIsExpanded(true)}
-        activeOpacity={0.7}
+        activeOpacity={0.85}
       >
-        <Text style={styles.miniTitle}>DEV: v9.0+</Text>
-        <Text style={styles.miniText}>
-          Speed: {gpsData.speed !== null ? `${gpsData.speed.toFixed(1)} km/h` : 'N/A'} | 
-          Load: {loadPercentage.toFixed(0)}%
-        </Text>
+        {/* 頂部標籤 */}
+        <View style={styles.miniHeader}>
+          <View style={styles.miniBadge}>
+            <Text style={styles.miniBadgeText}>DEV</Text>
+          </View>
+          <Text style={styles.miniVersion}>v9.0+</Text>
+        </View>
+        
+        {/* 速度指示器 */}
+        <View style={styles.miniMetric}>
+          <View style={styles.miniIconContainer}>
+            <Text style={styles.miniIcon}>🏃</Text>
+          </View>
+          <View style={styles.miniMetricContent}>
+            <Text style={styles.miniMetricLabel}>SPEED</Text>
+            <Text style={[styles.miniMetricValue, { color: speedColor }]}>
+              {gpsData.speed !== null ? `${gpsData.speed.toFixed(1)}` : '--'}
+            </Text>
+            <Text style={styles.miniMetricUnit}>km/h</Text>
+          </View>
+        </View>
+        
+        {/* 負載指示器 */}
+        <View style={styles.miniMetric}>
+          <View style={styles.miniIconContainer}>
+            <Text style={styles.miniIcon}>📦</Text>
+          </View>
+          <View style={styles.miniMetricContent}>
+            <Text style={styles.miniMetricLabel}>LOAD</Text>
+            <Text style={[styles.miniMetricValue, { color: loadColor }]}>
+              {loadPercentage.toFixed(0)}
+            </Text>
+            <Text style={styles.miniMetricUnit}>%</Text>
+          </View>
+        </View>
+        
+        {/* 負載進度條 */}
+        <View style={styles.miniProgressBar}>
+          <View 
+            style={[
+              styles.miniProgressFill, 
+              { 
+                width: `${Math.min(loadPercentage, 100)}%`,
+                backgroundColor: loadColor
+              }
+            ]} 
+          />
+        </View>
+        
+        {/* 擴展提示 */}
+        <View style={styles.miniExpandHint}>
+          <Text style={styles.miniExpandText}>點擊查看詳情</Text>
+          <Text style={styles.miniExpandIcon}>▼</Text>
+        </View>
       </TouchableOpacity>
     );
   }
@@ -379,8 +558,22 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
           
           <View style={styles.formulaRow}>
             <Text style={styles.formulaLabel}>Zone State:</Text>
-            <Text style={[styles.formulaValue, { color: isExplored ? '#4CAF50' : '#B0B0B0' }]}>
-              {isExplored ? '🟢 Explored' : '🌫️ Gray'}
+            <Text style={[styles.formulaValue, { color: zoneStatus.color, fontWeight: '700' }]}>
+              {zoneStatus.emoji} {zoneStatus.label}
+            </Text>
+          </View>
+          
+          <View style={styles.formulaRow}>
+            <Text style={styles.formulaLabel}>本次新探索:</Text>
+            <Text style={[styles.formulaValue, { color: '#52C759', fontWeight: '700' }]}>
+              {sessionState.currentSessionNewHexes.size} 個 H3
+            </Text>
+          </View>
+          
+          <View style={styles.formulaRow}>
+            <Text style={styles.formulaLabel}>歷史總探索:</Text>
+            <Text style={styles.formulaValue}>
+              {sessionState.exploredHexes.size} 個 H3
             </Text>
           </View>
           
@@ -388,6 +581,13 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
             <Text style={styles.formulaLabel}>Pathfinder:</Text>
             <Text style={[styles.formulaValue, { color: isPathfinder ? '#4CAF50' : '#B0B0B0' }]}>
               {isPathfinder ? '✨ BONUS ACTIVE' : 'Inactive'}
+            </Text>
+          </View>
+          
+          <View style={styles.formulaRow}>
+            <Text style={styles.formulaLabel}>開拓者紅利:</Text>
+            <Text style={[styles.formulaValue, { color: isPathfinder ? '#52C759' : '#B0B0B0', fontWeight: '700' }]}>
+              {isPathfinder ? '✅ T2 +10%' : '❌ 未啟動'}
             </Text>
           </View>
           
@@ -676,6 +876,13 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
           >
             <Text style={styles.actionButtonText}>➕ 添加隨機物品</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#52C759', marginTop: 6 }]}
+            onPress={handleAddItemWithBonus}
+          >
+            <Text style={styles.actionButtonText}>✨ 添加物品（開拓者紅利）</Text>
+          </TouchableOpacity>
         </View>
 
         {/* 區塊 C：消耗品測試 */}
@@ -760,29 +967,126 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
 };
 
 const styles = StyleSheet.create({
-  // ⭐ Mini Mode 樣式
-  miniContainer: {
+  // ⭐ Mini Mode 樣式 - 現代化設計
+  miniContainerModern: {
     position: 'absolute',
     top: 120,
-    right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    padding: 8,
-    borderRadius: 6,
+    right: 12,
+    backgroundColor: 'rgba(20, 20, 20, 0.95)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(76, 175, 80, 0.4)',
+    zIndex: 1000,
+    minWidth: 140,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  miniHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  miniBadge: {
+    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#4CAF50',
-    zIndex: 1000,
   },
-  miniTitle: {
-    fontSize: 10,
-    fontWeight: '700',
+  miniBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
     color: '#4CAF50',
     fontFamily: 'monospace',
-    marginBottom: 4,
+    letterSpacing: 0.5,
   },
-  miniText: {
+  miniVersion: {
     fontSize: 9,
-    color: '#FFFFFF',
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.5)',
     fontFamily: 'monospace',
+  },
+  miniMetric: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  miniIconContainer: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  miniIcon: {
+    fontSize: 12,
+  },
+  miniMetricContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'flex-start',
+    gap: 4,
+  },
+  miniMetricLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontFamily: 'monospace',
+    letterSpacing: 0.5,
+    marginRight: 4,
+  },
+  miniMetricValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    fontFamily: 'monospace',
+    letterSpacing: -0.5,
+  },
+  miniMetricUnit: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontFamily: 'monospace',
+  },
+  miniProgressBar: {
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginVertical: 8,
+  },
+  miniProgressFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  miniExpandHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 4,
+  },
+  miniExpandText: {
+    fontSize: 8,
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontFamily: 'monospace',
+  },
+  miniExpandIcon: {
+    fontSize: 8,
+    color: 'rgba(76, 175, 80, 0.6)',
   },
   // ⭐ Expanded Mode 樣式
   expandedContainer: {

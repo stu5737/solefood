@@ -39,6 +39,8 @@ PODS:
     - ExpoModulesCore
   - ExpoFont (14.0.10):
     - ExpoModulesCore
+  - ExpoHaptics (15.0.8):
+    - ExpoModulesCore
   - ExpoHead (6.0.21):
     - ExpoModulesCore
     - RNScreens
@@ -82,6 +84,14 @@ PODS:
   - hermes-engine (0.81.5):
     - hermes-engine/Pre-built (= 0.81.5)
   - hermes-engine/Pre-built (0.81.5)
+  - MapboxCommon (24.16.6):
+    - Turf (= 4.0.0)
+  - MapboxCoreMaps (11.16.6):
+    - MapboxCommon (= 24.16.6)
+  - MapboxMaps (11.16.6):
+    - MapboxCommon (= 24.16.6)
+    - MapboxCoreMaps (= 11.16.6)
+    - Turf (= 4.0.0)
   - RCTDeprecation (0.81.5)
   - RCTRequired (0.81.5)
   - RCTTypeSafety (0.81.5):
@@ -1804,6 +1814,33 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - rnmapbox-maps (10.2.10):
+    - MapboxMaps (~> 11.16.2)
+    - React
+    - React-Core
+    - rnmapbox-maps/DynamicLibrary (= 10.2.10)
+    - Turf
+  - rnmapbox-maps/DynamicLibrary (10.2.10):
+    - hermes-engine
+    - MapboxMaps (~> 11.16.2)
+    - RCTRequired
+    - RCTTypeSafety
+    - React
+    - React-Core
+    - React-Core-prebuilt
+    - React-featureflags
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Turf
+    - Yoga
   - RNReanimated (4.2.1):
     - hermes-engine
     - RCTRequired
@@ -1925,6 +1962,51 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNSVG (15.12.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - RNSVG/common (= 15.12.1)
+    - Yoga
+  - RNSVG/common (15.12.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNWorklets (0.7.1):
     - hermes-engine
     - RCTRequired
@@ -1996,6 +2078,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - Turf (4.0.0)
   - UMAppLoader (5.0.1)
   - Yoga (0.0.0)
 
@@ -2008,6 +2091,7 @@ DEPENDENCIES:
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoFileSystem (from `../node_modules/expo-file-system/ios`)
   - ExpoFont (from `../node_modules/expo-font/ios`)
+  - ExpoHaptics (from `../node_modules/expo-haptics/ios`)
   - ExpoHead (from `../node_modules/expo-router/ios`)
   - ExpoImagePicker (from `../node_modules/expo-image-picker/ios`)
   - ExpoKeepAwake (from `../node_modules/expo-keep-awake/ios`)
@@ -2086,11 +2170,20 @@ DEPENDENCIES:
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
+  - "rnmapbox-maps (from `../node_modules/@rnmapbox/maps`)"
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
+  - RNSVG (from `../node_modules/react-native-svg`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
+
+SPEC REPOS:
+  trunk:
+    - MapboxCommon
+    - MapboxCoreMaps
+    - MapboxMaps
+    - Turf
 
 EXTERNAL SOURCES:
   EXApplication:
@@ -2109,6 +2202,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-file-system/ios"
   ExpoFont:
     :path: "../node_modules/expo-font/ios"
+  ExpoHaptics:
+    :path: "../node_modules/expo-haptics/ios"
   ExpoHead:
     :path: "../node_modules/expo-router/ios"
   ExpoImagePicker:
@@ -2264,10 +2359,14 @@ EXTERNAL SOURCES:
     :podspec: "../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
   RNCAsyncStorage:
     :path: "../node_modules/@react-native-async-storage/async-storage"
+  rnmapbox-maps:
+    :path: "../node_modules/@rnmapbox/maps"
   RNReanimated:
     :path: "../node_modules/react-native-reanimated"
   RNScreens:
     :path: "../node_modules/react-native-screens"
+  RNSVG:
+    :path: "../node_modules/react-native-svg"
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
   UMAppLoader:
@@ -2284,6 +2383,7 @@ SPEC CHECKSUMS:
   ExpoAsset: f867e55ceb428aab99e1e8c082b5aee7c159ea18
   ExpoFileSystem: 858a44267a3e6e9057e0888ad7c7cfbf55d52063
   ExpoFont: 35ac6191ed86bbf56b3ebd2d9154eda9fad5b509
+  ExpoHaptics: d3a6375d8dcc3a1083d003bc2298ff654fafb536
   ExpoHead: 9719a74953454fac328e90f34eea55ebbb3bbbf9
   ExpoImagePicker: 1af3e4e31512d2f34c95c2a3018a3edc40aee748
   ExpoKeepAwake: 55f75eca6499bb9e4231ebad6f3e9cb8f99c0296
@@ -2294,6 +2394,9 @@ SPEC CHECKSUMS:
   EXTaskManager: 0dcaa9b4b058b435f4e5bff4919c863f4f46badc
   FBLazyVector: e95a291ad2dadb88e42b06e0c5fb8262de53ec12
   hermes-engine: 9f4dfe93326146a1c99eb535b1cb0b857a3cd172
+  MapboxCommon: 10cbf74edb23c9abcfe2424899d804f288a47334
+  MapboxCoreMaps: f19680d20681797067268284b2292349de861730
+  MapboxMaps: 04c7bf46d66265ad0f4b98484a251777a926c423
   RCTDeprecation: 943572d4be82d480a48f4884f670135ae30bf990
   RCTRequired: 8f3cfc90cc25cf6e420ddb3e7caaaabc57df6043
   RCTTypeSafety: 16a4144ca3f959583ab019b57d5633df10b5e97c
@@ -2361,12 +2464,15 @@ SPEC CHECKSUMS:
   ReactCommon: 08810150b1206cc44aecf5f6ae19af32f29151a8
   ReactNativeDependencies: 71ce9c28beb282aa720ea7b46980fff9669f428a
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
+  rnmapbox-maps: 6135ab50fda2676f742555f210d1e1657a5b6378
   RNReanimated: 8a7182314bb7afc01041a529e409a9112c007a50
   RNScreens: d8d6f1792f6e7ac12b0190d33d8d390efc0c1845
+  RNSVG: 31d6639663c249b7d5abc9728dde2041eb2a3c34
   RNWorklets: 9eb6d567fa43984e96b6924a6df504b8a15980cd
+  Turf: c9eb11a65d96af58cac523460fd40fec5061b081
   UMAppLoader: 7e7e0eaa7854ffd652c00a68c443afb28c3bedba
   Yoga: 5934998fbeaef7845dbf698f698518695ab4cd1a
 
-PODFILE CHECKSUM: ce21c9957a66d8cb095003d1dd1c0678eb0575ea
+PODFILE CHECKSUM: 13dd87982602ce03803a53cec6a7a2ab85d9aff8
 
 COCOAPODS: 1.16.2
