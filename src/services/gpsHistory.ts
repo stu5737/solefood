@@ -52,6 +52,15 @@ class GPSHistoryService {
   private backgroundPointCount: number = 0; // 背景模式下記錄的點數
   private appState: AppStateStatus = AppState.currentState; // App 狀態
   private saveInterval: NodeJS.Timeout | null = null; // ⭐ 新增：定期保存定時器
+  
+  // ========== 🚀 GPS 三層過濾漏斗 (3-Layer Filtering Funnel) ==========
+  private readonly MAX_ACCURACY_THRESHOLD = 40; // 第一層：最大精度閾值（米），超過此值丟棄
+  private readonly MAX_SPEED_THRESHOLD = 10; // 第二層：最大合理速度（m/s），超過此值可能是飄移（約 36 km/h）
+  private readonly MAX_JUMP_DISTANCE = 50; // 第二層：最大合理跳躍距離（米），超過此值需驗證速度
+  private readonly SMOOTHING_BUFFER_SIZE = 5; // 第三層：平滑化窗口大小（保留最近 5 個點）
+  
+  private locationBuffer: Array<{ latitude: number; longitude: number; timestamp: number }> = []; // 平滑化緩衝區
+  private lastValidLocation: { latitude: number; longitude: number; timestamp: number } | null = null; // 上一個通過過濾的位置
 
   /**
    * 初始化：從持久化存儲載入歷史
@@ -289,11 +298,20 @@ class GPSHistoryService {
     // ⭐ 防崩潰修復：清理會話點數據（currentSessionId 已在方法開頭清空）
     this.currentSessionPoints = [];
     
-    console.log('[GPSHistoryService] 🧹 會話狀態已完全清理');
+    // ✅ 清除 GPS 過濾緩衝區（新會話需要重新建立平滑化窗口）
+    this.locationBuffer = [];
+    this.lastValidLocation = null;
+    
+    console.log('[GPSHistoryService] 🧹 會話狀態已完全清理（包含 GPS 過濾緩衝區）');
   }
 
   /**
    * 添加 GPS 點到歷史（只有在會話進行中時才記錄）
+   * 
+   * ✅ 實施三層過濾漏斗 (3-Layer Filtering Funnel)：
+   * 1. 精度過濾 (Accuracy Gate) - 過濾低精度訊號
+   * 2. 速度過濾 (Teleport Protection) - 過濾瞬移噪點
+   * 3. 平滑化窗口 (Smoothing Window) - 平滑 GPS 抖動
    * 
    * @param location - 位置數據
    * @param distance - 與上一點的距離（km）
@@ -310,8 +328,90 @@ class GPSHistoryService {
       return;
     }
 
+    // ========== 第一層：精度過濾 (Accuracy Gate) ==========
+    // 檢查 GPS 精度，如果誤差超過 40m，這數據完全不可信（室內或高樓反射）
+    const accuracy = location.accuracy || 0;
+    if (accuracy > this.MAX_ACCURACY_THRESHOLD) {
+      console.log(`[GPS Filter] ❌ 第一層過濾：精度不足 (accuracy=${accuracy.toFixed(1)}m > ${this.MAX_ACCURACY_THRESHOLD}m)，丟棄`);
+      return;
+    }
+
+    // ========== 第二層：速度過濾 (Teleport Protection) ==========
+    // 檢查移動速度，過濾瞬移噪點
+    if (this.lastValidLocation) {
+      const timeDiff = (location.timestamp - this.lastValidLocation.timestamp) / 1000; // 秒
+      
+      // 只有時間差大於 0.5 秒才進行速度檢查（避免時間戳異常）
+      if (timeDiff > 0.5) {
+        const distMeters = this.calculateDistanceMeters(
+          this.lastValidLocation.latitude,
+          this.lastValidLocation.longitude,
+          location.latitude,
+          location.longitude
+        );
+        
+        const speed = distMeters / timeDiff; // m/s
+        
+        // 如果速度超過 10 m/s (36 km/h) 且距離超過 50m，視為異常飄移
+        if (speed > this.MAX_SPEED_THRESHOLD && distMeters > this.MAX_JUMP_DISTANCE) {
+          console.log(`[GPS Filter] ❌ 第二層過濾：速度異常 (speed=${speed.toFixed(1)}m/s = ${(speed * 3.6).toFixed(1)}km/h, dist=${distMeters.toFixed(1)}m)，丟棄`);
+          return;
+        }
+      }
+    }
+
+    // ========== 第三層：平滑化窗口 (Smoothing Window) ==========
+    // 將通過過濾的點加入緩衝區，計算平均座標
+    this.locationBuffer.push({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      timestamp: location.timestamp,
+    });
+    
+    // 只保留最近 N 個點
+    if (this.locationBuffer.length > this.SMOOTHING_BUFFER_SIZE) {
+      this.locationBuffer.shift();
+    }
+    
+    // 計算平均座標（平滑化）
+    const avgLat = this.locationBuffer.reduce((sum, p) => sum + p.latitude, 0) / this.locationBuffer.length;
+    const avgLng = this.locationBuffer.reduce((sum, p) => sum + p.longitude, 0) / this.locationBuffer.length;
+    
+    // 使用平滑後的座標創建點（但保留原始數據供參考）
+    const smoothedLocation: LocationData = {
+      latitude: avgLat,
+      longitude: avgLng,
+      timestamp: location.timestamp,
+      accuracy: location.accuracy,
+      speed: location.speed,
+    };
+    
+    // 更新最後有效位置（使用原始座標，用於下次速度檢查）
+    this.lastValidLocation = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      timestamp: location.timestamp,
+    };
+    
+    // 如果是第一個點，輸出平滑化啟動訊息
+    if (this.currentSessionPoints.length === 0) {
+      console.log(`[GPS Filter] ✅ 三層過濾啟動：精度閾值=${this.MAX_ACCURACY_THRESHOLD}m, 速度閾值=${(this.MAX_SPEED_THRESHOLD * 3.6).toFixed(1)}km/h, 平滑窗口=${this.SMOOTHING_BUFFER_SIZE}點`);
+    }
+    
+    // 計算與平滑後上一點的距離（用於距離過濾）
+    let smoothedDistance = distance;
+    if (this.currentSessionPoints.length > 0) {
+      const lastPoint = this.currentSessionPoints[this.currentSessionPoints.length - 1];
+      smoothedDistance = this.calculateDistanceMeters(
+        lastPoint.latitude,
+        lastPoint.longitude,
+        avgLat,
+        avgLng
+      ) / 1000; // 轉換為 km
+    }
+
     // 過濾太近的點（減少存儲空間），但第一個點始終記錄
-    if (this.currentSessionPoints.length > 0 && distance < this.MIN_DISTANCE_THRESHOLD) {
+    if (this.currentSessionPoints.length > 0 && smoothedDistance < this.MIN_DISTANCE_THRESHOLD) {
       return;
     }
 
@@ -326,13 +426,14 @@ class GPSHistoryService {
       }
     }
 
+    // 使用平滑後的座標創建點
     const point: GPSHistoryPoint = {
-      latitude: location.latitude,
-      longitude: location.longitude,
-      timestamp: location.timestamp,
-      speed: location.speed,
-      accuracy: location.accuracy,
-      distance,
+      latitude: avgLat, // ✅ 使用平滑後的緯度
+      longitude: avgLng, // ✅ 使用平滑後的經度
+      timestamp: smoothedLocation.timestamp,
+      speed: smoothedLocation.speed,
+      accuracy: smoothedLocation.accuracy,
+      distance: smoothedDistance, // ✅ 使用平滑後的距離
       sessionId: this.currentSessionId,
     };
 
@@ -494,6 +595,10 @@ class GPSHistoryService {
     this.currentSessionPoints = [];
     this.saveCounter = 0;
     
+    // ✅ 清除 GPS 過濾緩衝區
+    this.locationBuffer = [];
+    this.lastValidLocation = null;
+    
     // 2. 清除持久化存儲
     await saveData(STORAGE_KEYS.GPS_HISTORY, []);
     await saveData(STORAGE_KEYS.GPS_SESSIONS, []);
@@ -507,6 +612,33 @@ class GPSHistoryService {
       historyPoints: verifyHistory?.length || 0,
       sessions: verifySessions?.length || 0,
     });
+  }
+
+  /**
+   * 計算兩點之間的距離（米）
+   * 使用 Haversine 公式
+   * 
+   * @param lat1 - 起點緯度
+   * @param lng1 - 起點經度
+   * @param lat2 - 終點緯度
+   * @param lng2 - 終點經度
+   * @returns 距離（米）
+   */
+  private calculateDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371000; // 地球半徑（米）
+    const toRad = (deg: number) => deg * Math.PI / 180;
+    
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    
+    return R * c;
   }
 
   /**

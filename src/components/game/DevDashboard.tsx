@@ -759,7 +759,12 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
               console.log('[DevDashboard] 🔴 Clear History button touched!');
               Alert.alert(
                 '⚠️ 確認清除',
-                '即將清除所有 GPS 歷史軌跡和探索記錄。此操作無法撤銷！',
+                '即將清除所有歷史數據：\n' +
+                '• exploredHexes（"去過哪裡" - H3 渲染）\n' +
+                '• historySessions（"怎麼去的" - 軌跡查看）\n' +
+                '• 當前會話的新 H3\n' +
+                '• 所有持久化存儲數據\n\n' +
+                '此操作無法撤銷！',
                 [
                   { 
                     text: '取消', 
@@ -785,10 +790,11 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
                         
                         // Step 2: Clear ALL related AsyncStorage keys
                         console.log('[DevDashboard] 🗑️ Step 3: Clearing ALL AsyncStorage keys...');
-                        await AsyncStorage.removeItem('solefood-session-storage'); // Zustand persist
-                        await AsyncStorage.removeItem('gps_history'); // GPS history
-                        await AsyncStorage.removeItem('gps_sessions'); // GPS sessions
-                        await AsyncStorage.removeItem('explored_hexes'); // Explored hexes
+                        await AsyncStorage.removeItem('solefood-session-storage'); // Zustand persist (包含 exploredHexes)
+                        await AsyncStorage.removeItem('gps_history'); // GPS history points
+                        await AsyncStorage.removeItem('gps_sessions'); // GPS sessions (historySessions)
+                        await AsyncStorage.removeItem('explored_hexes'); // Legacy explored hexes (如果存在)
+                        await AsyncStorage.removeItem('@solefood/current-session-hexes'); // 當前會話臨時數據
                         console.log('[DevDashboard] ✅ All AsyncStorage keys cleared');
                         
                         // Step 3: Wait for AsyncStorage operations to complete
@@ -799,20 +805,39 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
                         const verifyHistory = await AsyncStorage.getItem('gps_history');
                         const verifySessions = await AsyncStorage.getItem('gps_sessions');
                         const verifyPersist = await AsyncStorage.getItem('solefood-session-storage');
+                        const verifyCurrentSession = await AsyncStorage.getItem('@solefood/current-session-hexes');
                         console.log('[DevDashboard] Verification:', {
                           history: verifyHistory ? 'STILL EXISTS!' : 'cleared ✅',
                           sessions: verifySessions ? 'STILL EXISTS!' : 'cleared ✅',
-                          persist: verifyPersist ? 'STILL EXISTS!' : 'cleared ✅'
+                          persist: verifyPersist ? 'STILL EXISTS!' : 'cleared ✅',
+                          currentSession: verifyCurrentSession ? 'STILL EXISTS!' : 'cleared ✅'
                         });
                         
-                        // Step 5: Clear session store state
+                        // Step 5: Clear session store state (內存中的 exploredHexes 和 currentSessionNewHexes)
                         console.log('[DevDashboard] 🗑️ Step 5: Clearing session store state...');
+                        const store = useSessionStore.getState();
                         useSessionStore.setState({ 
-                          exploredHexes: new Set<string>(),
-                          currentSessionNewHexes: new Set<string>(),
+                          exploredHexes: new Set<string>(), // ✅ 清除 exploredHexes = "去過哪裡"（H3 渲染）
+                          currentSessionNewHexes: new Set<string>(), // ✅ 清除當前會話的新 H3
                           lastKnownHex: null,
                         });
-                        console.log('[DevDashboard] ✅ Session store state cleared');
+                        
+                        // 驗證清除
+                        const afterClear = useSessionStore.getState();
+                        console.log('[DevDashboard] ✅ Session store state cleared:', {
+                          exploredHexesBefore: store.exploredHexes.size,
+                          exploredHexesAfter: afterClear.exploredHexes.size,
+                          currentSessionHexesBefore: store.currentSessionNewHexes.size,
+                          currentSessionHexesAfter: afterClear.currentSessionNewHexes.size,
+                        });
+                        
+                        // 驗證 GPS history service
+                        const allSessions = gpsHistoryService.getAllSessions();
+                        console.log('[DevDashboard] ✅ GPS history service state:', {
+                          sessionsCount: allSessions.length, // ✅ historySessions = "怎麼去的"（軌跡查看）
+                          historyPointsCount: gpsHistoryService.getHistoryCount(),
+                          isActive: gpsHistoryService.isSessionActive(),
+                        });
                         
                         // Step 6: Wait before reload
                         await new Promise(resolve => setTimeout(resolve, 500));

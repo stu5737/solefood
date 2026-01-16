@@ -42,6 +42,64 @@ export const CAMERA_CONFIG = {
 };
 
 /**
+ * 🎨 地圖標籤樣式配置
+ * 用於控制路名、POI 等標籤的顯示
+ */
+
+/**
+ * 極簡樣式（無標籤）- 用於探索模式
+ * 隱藏所有文字標籤，突出 H3 視覺效果
+ */
+export const NO_LABELS_STYLE_JSON = {
+  version: 8,
+  sources: {},
+  layers: [
+    {
+      id: 'hide-labels',
+      type: 'symbol',
+      layout: {
+        'text-field': '',
+        visibility: 'none',
+      },
+    },
+  ],
+  // 通過 metadata 標記這是覆蓋樣式
+  metadata: {
+    'mapbox:autocomposite': true,
+  },
+} as any;
+
+/**
+ * 幽靈標籤樣式（極淡標籤）- 高級選項
+ * 標籤顏色極淡，不搶 H3 風采，但仔細看還能看見
+ */
+export const GHOST_LABELS_STYLE_JSON = {
+  version: 8,
+  sources: {},
+  layers: [
+    {
+      id: 'ghost-labels',
+      type: 'symbol',
+      paint: {
+        'text-color': '#dddddd', // 極淡灰色
+        'text-halo-color': 'rgba(255, 255, 255, 0)',
+        'text-halo-width': 0,
+      },
+    },
+  ],
+  metadata: {
+    'mapbox:autocomposite': true,
+  },
+} as any;
+
+/**
+ * 🚀 Mapbox 樣式版本號（快速開發用）
+ * 每次在 Mapbox Studio 更新樣式後，遞增此版本號即可強制刷新
+ * 例如：v1 → v2 → v3...
+ */
+export const MAP_STYLE_VERSION = 'v5';
+
+/**
  * 🎨 Solefood 品牌配色 - 雙主題系統
  * 核心理念：享受美食 × 享受運動 = 溫暖活力的生活態度
  */
@@ -53,8 +111,10 @@ export const CAMERA_CONFIG = {
  */
 export const MORNING_THEME = {
   name: '早晨',
-  // ✅ 方案 1：改用支持 3D 的樣式（streets-v12 支持更好的 3D 渲染）
-  mapStyle: 'mapbox://styles/mapbox/streets-v12', // 從 light-v11 改為 streets-v12（支持 3D）
+  // ✅ 使用自定義地圖樣式（無標籤，突出 H3）
+  // 🚀 添加版本號強制刷新：每次更新樣式時，在文件頂部將 MAP_STYLE_VERSION 遞增
+  mapStyle: `mapbox://styles/stu5737/cmkgi75b3000h01sr360cbqgv?v=${MAP_STYLE_VERSION}`, // 自定義樣式（探索模式）
+  mapStyleWithLabels: `mapbox://styles/mapbox/light-v11?v=${MAP_STYLE_VERSION}`, // 導航模式：使用預設淺色樣式（有標籤）
   historyH3: {
     heatmapColor: [
       'interpolate', ['linear'], ['heatmap-density'],
@@ -64,6 +124,10 @@ export const MORNING_THEME = {
       0.6, 'rgba(255, 210, 140, 0.35)', // 明亮的朝陽（增強）
       1, 'rgba(255, 220, 150, 0.50)'    // 中心：金色陽光（增強到 50%）
     ] as any,
+    fill: {
+      color: 'rgba(255, 200, 120, 1)', // 暖黃色
+      opacityRange: { max: 0.50, min: 0.10 }, // 早晨模式：更明顯的透明度範圍
+    },
   },
   // ✅ 早晨模式下的 UI 元素顏色（深色系，在淺色地圖上可見）
   currentH3: {
@@ -80,7 +144,7 @@ export const MORNING_THEME = {
     arrow: {
       color: '#FF6B35', // 深橙色箭頭
       haloColor: 'rgba(255, 255, 255, 0.9)', // 白色光暈
-      haloWidth: 4,
+      haloWidth: 3, // ✅ 縮小 25%（從 4 改為 3）
     },
   },
 };
@@ -92,8 +156,10 @@ export const MORNING_THEME = {
  */
 export const NIGHT_THEME = {
   name: '夜晚',
-  // ✅ 方案 1：改用支持 3D 的樣式（保持深色但支持 3D）
-  mapStyle: 'mapbox://styles/mapbox/streets-v12', // 從 dark-v11 改為 streets-v12（支持 3D，但可以通過其他方式變暗）
+  // ✅ 使用自定義地圖樣式（無標籤，突出 H3）
+  // 🚀 添加版本號強制刷新：每次更新樣式時，在文件頂部將 MAP_STYLE_VERSION 遞增
+  mapStyle: `mapbox://styles/stu5737/cmkgi75b3000h01sr360cbqgv?v=${MAP_STYLE_VERSION}`, // 自定義樣式（探索模式）
+  mapStyleWithLabels: `mapbox://styles/mapbox/dark-v11?v=${MAP_STYLE_VERSION}`, // 導航模式：使用預設深色樣式（有標籤）
   historyH3: {
     heatmapColor: [
       'interpolate', ['linear'], ['heatmap-density'],
@@ -103,6 +169,10 @@ export const NIGHT_THEME = {
       0.6, 'rgba(255, 220, 177, 0.30)', // 明亮的燈光
       1, 'rgba(255, 220, 177, 0.40)'    // 中心：溫暖燈光
     ] as any,
+    fill: {
+      color: 'rgba(255, 220, 177, 1)', // 溫暖米色
+      opacityRange: { max: 0.40, min: 0.08 }, // 夜晚模式：柔和的透明度範圍
+    },
   },
 };
 
@@ -156,7 +226,7 @@ export const MAP_THEME = {
       // 純白色箭頭（與軌跡、新 H3 同色系，完全融合設計）
       color: '#FFFFFF', // 純白色
       haloColor: 'rgba(255, 255, 255, 0.8)', // ✅ 半透明白色光暈（避免暴露被遮蓋）
-      haloWidth: 4,
+      haloWidth: 3, // ✅ 縮小 25%（從 4 改為 3）
       size: {
         mode3D: 40,
         mode2D: 36,
