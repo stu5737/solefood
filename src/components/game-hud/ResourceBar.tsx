@@ -20,6 +20,7 @@ interface ResourceBarProps {
   label: string; // 標籤文字（例如 "100/100" 或 "2.5/5"）
   height?: number; // 條的高度（預設 28）
   showIcon?: boolean; // 是否顯示圖標（預設 true）
+  changeValue?: number; // 變化值（用於顯示 +xxx 或 -xxx）
 }
 
 export const ResourceBar: React.FC<ResourceBarProps> = ({
@@ -29,6 +30,7 @@ export const ResourceBar: React.FC<ResourceBarProps> = ({
   label,
   height = 28,
   showIcon = true,
+  changeValue,
 }) => {
   const fillWidth = useSharedValue(0);
 
@@ -94,12 +96,23 @@ export const ResourceBar: React.FC<ResourceBarProps> = ({
               left: hasIcon ? height + 10 : 2, // 從圖標右側開始，增加間距讓文字更靠右（約兩個字元）
               right: 0, // 延伸到右邊緣
               alignItems: 'flex-start', // 靠左對齊
+              flexDirection: 'row', // 橫向排列標籤和變化值
             }
           ]}
         >
           <Text style={styles.labelText} numberOfLines={1} ellipsizeMode="tail">
             {label}
           </Text>
+          {changeValue !== undefined && changeValue !== 0 && (
+            <Text 
+              style={[
+                styles.changeText,
+                { color: changeValue > 0 ? '#FF8C42' : '#FF6B6B' }
+              ]}
+            >
+              {changeValue > 0 ? '+' : ''}{changeValue.toFixed(2)}
+            </Text>
+          )}
         </View>
 
         {/* 外框（更細邊框，更柔和） */}
@@ -173,6 +186,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2, // 減少字距，節省空間
     // 確保文字不會溢出
     flexShrink: 1,
+  },
+  changeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    marginLeft: 6,
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   border: {
     position: 'absolute',

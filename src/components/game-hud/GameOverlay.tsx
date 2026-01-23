@@ -48,14 +48,17 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
   return (
     <View style={styles.container} pointerEvents="box-none">
       {/* 底部動作按鈕區域 - 更靠近底部 */}
-      <View style={[styles.bottomSection, { bottom: insets.bottom + 8 }]} pointerEvents="box-none">
-        {/* 使用透明 PNG 圖片按鈕（再放大 120%，保持原始比例） */}
-        <SolefoodButton
-          onPress={onActionPress}
-          imageSource={require('../../../assets/images/forage_button.png')}
-          style={{ width: 568, height: 162 }}
-        />
-      </View>
+      {/* 當 actionState 為 'active' 時，按鈕消失 */}
+      {actionState !== 'active' && (
+        <View style={[styles.bottomSection, { bottom: insets.bottom + 8 }]} pointerEvents="box-none">
+          {/* 使用透明 PNG 圖片按鈕（再放大 120%，保持原始比例） */}
+          <SolefoodButton
+            onPress={onActionPress}
+            imageSource={require('../../../assets/images/forage_button.png')}
+            style={{ width: 568, height: 162 }}
+          />
+        </View>
+      )}
     </View>
   );
 };

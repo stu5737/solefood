@@ -133,8 +133,8 @@ class BackgroundLocationService {
       // 如果前台權限都沒有，必須請求
       if (currentForegroundStatus !== 'granted') {
         console.log('[BackgroundLocationService] 📋 前台權限未授予，開始請求權限...');
-        const hasPermission = await this.requestBackgroundPermissions();
-        if (!hasPermission) {
+      const hasPermission = await this.requestBackgroundPermissions();
+      if (!hasPermission) {
           console.error('[BackgroundLocationService] ❌ 前台權限被拒絕：Cannot start tracking: permission denied');
           return false;
         }
@@ -223,10 +223,10 @@ class BackgroundLocationService {
       
       try {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, taskOptions);
-        
-        this.isTracking = true;
-        console.log('[BackgroundLocationService] ✅ 背景位置追蹤已成功啟動！');
-        return true;
+
+      this.isTracking = true;
+      console.log('[BackgroundLocationService] ✅ 背景位置追蹤已成功啟動！');
+      return true;
       } catch (startError: any) {
         // ⭐ 特殊處理：UIBackgroundModes 配置錯誤
         const errorMessage = startError?.message || '';
@@ -358,7 +358,7 @@ class BackgroundLocationService {
   async stopBackgroundTracking(): Promise<void> {
     try {
       console.log('[BackgroundLocationService] 🧹 開始停止背景位置追蹤...');
-      
+
       // ⭐ 防崩潰修復：無論 isTracking 狀態如何，都嘗試停止（防止殘留）
       // 檢查任務是否在運行
       const isTaskRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);

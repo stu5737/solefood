@@ -1,17 +1,17 @@
 /**
- * SpeedIcon - 速度圖標組件
- * 使用速度圖標表達速度感
+ * TimeIcon - 時鐘圖標組件
+ * 使用時鐘圖標表示時間
  */
 
 import React from 'react';
 import { View, StyleSheet, Image } from 'react-native';
 
-interface SpeedIconProps {
+interface TimeIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
-  const imageSource = require('../../../assets/images/speed_icon.png');
+export const TimeIcon: React.FC<TimeIconProps> = ({ size = 36 }) => {
+  const imageSource = require('../../../assets/images/time_icon.png');
   
   return (
     <Image
@@ -19,7 +19,7 @@ export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
       style={[styles.icon, { width: size, height: size }]}
       resizeMode="contain"
       onError={(error) => {
-        console.warn('[SpeedIcon] 圖片加載失敗:', error);
+        console.warn('[TimeIcon] 圖片加載失敗:', error);
       }}
     />
   );

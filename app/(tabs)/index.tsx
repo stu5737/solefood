@@ -23,7 +23,7 @@ import {
   RescueModal,
   DevDashboard,
 } from '../../src/components/game';
-import { GameOverlay, TopHUD } from '../../src/components/game-hud';
+import { GameOverlay, TopHUD, MapStatsOverlay } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
@@ -79,8 +79,10 @@ export default function GameScreenV9Plus() {
   const consumableCount = items.filter((item) => item.tier === 1 || item.tier === 2).length;
 
   // 運動數據狀態
-  const [currentDistance, setCurrentDistance] = useState(0); // 當前會話總距離（km）
+  const [currentDistance, setCurrentDistance] = useState(0); // 當前會話總距離（公里）
   const [currentSpeed, setCurrentSpeed] = useState(0); // 當前速度（km/h）
+  const [exerciseTime, setExerciseTime] = useState(0); // 運動時間（秒）
+  const [steps, setSteps] = useState(0); // 步數
 
   // ========== 初始化 ==========
   useEffect(() => {
@@ -171,7 +173,7 @@ export default function GameScreenV9Plus() {
       }
     });
 
-    // 定期更新當前會話的總距離
+    // 定期更新當前會話的總距離、運動時間和步數
     const distanceInterval = setInterval(() => {
       if (gpsHistoryService.isSessionActive()) {
         const sessionId = gpsHistoryService.getCurrentSessionId();
@@ -179,16 +181,36 @@ export default function GameScreenV9Plus() {
           const sessions = gpsHistoryService.getAllSessions();
           const currentSession = sessions.find(s => s.sessionId === sessionId);
           if (currentSession) {
+            // 更新距離（totalDistance是km，保持為公里）
+            // 注意：totalDistance 存儲的是公里，保持為公里，只在顯示時轉換為米
             setCurrentDistance(currentSession.totalDistance);
+            
+            // 計算運動時間（秒）
+            const elapsed = (Date.now() - currentSession.startTime) / 1000;
+            setExerciseTime(Math.floor(elapsed));
+            
+            // 估算步數（基於GPS距離，一般1步約0.65米）
+            // totalDistance 是公里，需要轉換為米來計算步數
+            const distanceInMeters = currentSession.totalDistance * 1000;
+            const estimatedSteps = Math.round(Math.max(0, distanceInMeters) / 0.65);
+            
+            setSteps(estimatedSteps);
           } else {
-            // 如果找不到會話，從當前會話點計算總距離
+            // 如果找不到會話，從當前會話點計算總距離（point.distance是km）
             const trail = gpsHistoryService.getCurrentSessionTrail();
-            const totalDist = trail.reduce((sum, point) => sum + (point.distance || 0), 0);
-            setCurrentDistance(totalDist);
+            const totalDistKm = trail.reduce((sum, point) => sum + (point.distance || 0), 0);
+            setCurrentDistance(totalDistKm);
+            
+            // 估算步數（基於GPS距離，一般1步約0.65米）
+            const distanceInMeters = totalDistKm * 1000;
+            const estimatedSteps = Math.round(distanceInMeters / 0.65);
+            setSteps(estimatedSteps);
           }
         }
       } else {
         setCurrentDistance(0);
+        setExerciseTime(0);
+        setSteps(0);
       }
     }, 1000); // 每秒更新一次
 
@@ -464,8 +486,16 @@ export default function GameScreenV9Plus() {
           maxStamina={usePlayerStore.getState().maxStamina}
           currentWeight={totalWeight}
           maxWeight={effectiveMaxWeight}
-          distance={currentDistance}
+        />
+      )}
+
+      {/* ========== 地圖統計覆蓋層（速度、步數、運動時間、總距離） ========== */}
+      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && (
+        <MapStatsOverlay
           speed={currentSpeed}
+          steps={steps}
+          exerciseTime={exerciseTime}
+          totalDistance={currentDistance}
         />
       )}
 

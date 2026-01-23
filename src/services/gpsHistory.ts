@@ -399,15 +399,19 @@ class GPSHistoryService {
     }
     
     // 計算與平滑後上一點的距離（用於距離過濾）
-    let smoothedDistance = distance;
+    let smoothedDistance = 0;
     if (this.currentSessionPoints.length > 0) {
       const lastPoint = this.currentSessionPoints[this.currentSessionPoints.length - 1];
+      // 計算平滑後的距離（米），然後轉換為公里
       smoothedDistance = this.calculateDistanceMeters(
         lastPoint.latitude,
         lastPoint.longitude,
         avgLat,
         avgLng
       ) / 1000; // 轉換為 km
+    } else {
+      // 第一個點，如果傳入了 distance 參數（單位是米），轉換為公里
+      smoothedDistance = distance / 1000; // distance 是米，轉換為 km
     }
 
     // 過濾太近的點（減少存儲空間），但第一個點始終記錄
@@ -433,7 +437,7 @@ class GPSHistoryService {
       timestamp: smoothedLocation.timestamp,
       speed: smoothedLocation.speed,
       accuracy: smoothedLocation.accuracy,
-      distance: smoothedDistance, // ✅ 使用平滑後的距離
+      distance: smoothedDistance, // ✅ 使用平滑後的距離（單位：km）
       sessionId: this.currentSessionId,
     };
 
@@ -453,7 +457,8 @@ class GPSHistoryService {
     const session = this.sessions.get(this.currentSessionId);
     if (session) {
       session.points.push(point);
-      session.totalDistance += distance;
+      // ✅ 修復：使用 smoothedDistance（單位：km），而不是 distance（單位：米）
+      session.totalDistance += smoothedDistance;
       
       // ⭐ 防崩潰修復 4：限制會話記錄中的點數（防止渲染崩潰）
       if (session.points.length > MAX_SESSION_POINTS) {

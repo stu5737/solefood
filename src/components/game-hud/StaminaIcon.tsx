@@ -9,35 +9,26 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Image } from 'react-native';
 
 interface StaminaIconProps {
   size?: number; // 圖標大小（預設 36）
-  useImage?: boolean; // 是否使用圖片（預設 false，使用 emoji）
 }
 
-export const StaminaIcon: React.FC<StaminaIconProps> = ({ size = 36, useImage = false }) => {
-  // 暫時使用 emoji，直到圖片文件被添加
-  // 當圖片文件準備好後，可以取消註釋下面的代碼並註釋掉 emoji 部分
+export const StaminaIcon: React.FC<StaminaIconProps> = ({ size = 36 }) => {
+  // React Native 的 require() 在編譯時解析，如果圖片不存在會在構建時失敗
+  // 這裡直接使用 require，如果圖片路徑錯誤會在構建時報錯
+  const imageSource = require('../../../assets/images/stamina_icon.png');
   
-  // if (useImage) {
-  //   try {
-  //     return (
-  //       <Image
-  //         source={require('../../../assets/images/stamina_icon.png')}
-  //         style={[styles.icon, { width: size, height: size }]}
-  //         resizeMode="contain"
-  //       />
-  //     );
-  //   } catch (error) {
-  //     // 如果圖片加載失敗，回退到 emoji
-  //   }
-  // }
-
   return (
-    <View style={[styles.container, { width: size, height: size }]}>
-      <Text style={[styles.emoji, { fontSize: size * 0.8 }]}>🔥</Text>
-    </View>
+    <Image
+      source={imageSource}
+      style={[styles.icon, { width: size, height: size }]}
+      resizeMode="contain"
+      onError={(error) => {
+        console.warn('[StaminaIcon] 圖片加載失敗:', error);
+      }}
+    />
   );
 };
 
@@ -50,6 +41,7 @@ const styles = StyleSheet.create({
     // Emoji 樣式
   },
   icon: {
-    // 圖片樣式（當圖片文件準備好後使用）
+    // 圖片樣式 - 確保透明背景
+    backgroundColor: 'transparent',
   },
 });

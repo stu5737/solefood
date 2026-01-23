@@ -1,17 +1,17 @@
 /**
- * SpeedIcon - 速度圖標組件
- * 使用速度圖標表達速度感
+ * StepsIcon - 步數圖標組件
+ * 使用腳印圖標表示步數
  */
 
 import React from 'react';
 import { View, StyleSheet, Image } from 'react-native';
 
-interface SpeedIconProps {
+interface StepsIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
-  const imageSource = require('../../../assets/images/speed_icon.png');
+export const StepsIcon: React.FC<StepsIconProps> = ({ size = 36 }) => {
+  const imageSource = require('../../../assets/images/steps_icon.png');
   
   return (
     <Image
@@ -19,7 +19,7 @@ export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
       style={[styles.icon, { width: size, height: size }]}
       resizeMode="contain"
       onError={(error) => {
-        console.warn('[SpeedIcon] 圖片加載失敗:', error);
+        console.warn('[StepsIcon] 圖片加載失敗:', error);
       }}
     />
   );
