@@ -32,18 +32,46 @@ import { calculateFinalPayout } from '../../core/math/unloading';
 import { latLngToH3, H3_RESOLUTION } from '../../core/math/h3';
 import { CAPACITY, HYGIENE, STAMINA, ITEM_DISTRIBUTION, RESCUE_ADS, HEAVY_DUTY_TAX } from '../../utils/constants';
 import type { LocationData } from '../../services/location';
+// 圖標按鈕已移至主界面（TopStatusCapsules 和 BottomActionButton）
 
 interface DevDashboardProps {
   visible?: boolean;
+  onClose?: () => void; // 關閉回調
+  // 遊戲控制回調
+  onStartShift?: () => void;
+  onUnload?: () => void;
+  onPicnic?: () => void;
+  onShowHistory?: () => void;
+  onRecenterMap?: () => void;
+  onQuickConsume?: () => void;
+  onBackpackPress?: () => void;
+  gameState?: 'IDLE' | 'COLLECTING' | 'UNLOADING' | 'PICNIC';
+  isBackpackFull?: boolean;
+  sessionCount?: number;
+  consumableCount?: number;
 }
 
-export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) => {
+export const DevDashboard: React.FC<DevDashboardProps> = ({ 
+  visible = true,
+  onClose,
+  onStartShift,
+  onUnload,
+  onPicnic,
+  onShowHistory,
+  onRecenterMap,
+  onQuickConsume,
+  onBackpackPress,
+  gameState = 'IDLE',
+  isBackpackFull = false,
+  sessionCount = 0,
+  consumableCount = 0,
+}) => {
   const playerState = usePlayerStore();
   const sessionState = useSessionStore();
   const inventoryState = useInventoryStore();
 
-  // ⭐ 可折疊模式
-  const [isExpanded, setIsExpanded] = useState(false);
+  // ⭐ 可折疊模式（如果提供了 onClose，默認展開為全屏模式）
+  const [isExpanded, setIsExpanded] = useState(!!onClose);
 
   // GPS 實時數據
   const [gpsData, setGpsData] = useState<{
@@ -394,7 +422,13 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
         <Text style={styles.headerTitle}>Solefood Omni-Dashboard</Text>
         <TouchableOpacity
           style={styles.closeButton}
-          onPress={() => setIsExpanded(false)}
+          onPress={() => {
+            if (onClose) {
+              onClose();
+            } else {
+              setIsExpanded(false);
+            }
+          }}
         >
           <Text style={styles.closeButtonText}>✕</Text>
         </TouchableOpacity>
@@ -910,6 +944,56 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({ visible = true }) =>
           </TouchableOpacity>
         </View>
 
+        {/* ⭐ 新增：遊戲控制區塊 */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🎮 遊戲控制</Text>
+          
+          {/* 主動作按鈕 */}
+          {gameState === 'IDLE' && onStartShift && (
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#4CAF50', marginBottom: 12 }]}
+              onPress={onStartShift}
+            >
+              <Text style={styles.actionButtonText}>▶️ START SHIFT</Text>
+            </TouchableOpacity>
+          )}
+          
+          {gameState === 'COLLECTING' && (
+            <View style={styles.gameControlRow}>
+              {onUnload && (
+                <TouchableOpacity
+                  style={[
+                    styles.gameControlButton,
+                    { backgroundColor: '#2196F3' },
+                    isBackpackFull && styles.gameControlButtonPulse,
+                  ]}
+                  onPress={onUnload}
+                >
+                  <Text style={styles.gameControlIcon}>🚗</Text>
+                  <Text style={styles.gameControlText}>卸貨</Text>
+                  {isBackpackFull && (
+                    <View style={styles.fullBadge}>
+                      <Text style={styles.fullText}>滿</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
+              
+              {onPicnic && (
+                <TouchableOpacity
+                  style={[styles.gameControlButton, { backgroundColor: '#FF9800' }]}
+                  onPress={onPicnic}
+                >
+                  <Text style={styles.gameControlIcon}>🍽️</Text>
+                  <Text style={styles.gameControlText}>野餐</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          
+          {/* 圖標按鈕已移至主界面頂部和底部 */}
+        </View>
+
         {/* 區塊 C：消耗品測試 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>🍽️ 消耗品測試</Text>
@@ -1195,6 +1279,106 @@ const styles = StyleSheet.create({
   monoText: {
     fontFamily: 'monospace',
   },
+  // 遊戲控制按鈕樣式
+  gameControlRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  gameControlButton: {
+    flex: 1,
+    height: 64,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  gameControlButtonPulse: {
+    transform: [{ scale: 1.05 }],
+    shadowOpacity: 0.6,
+  },
+  gameControlIcon: {
+    fontSize: 28,
+    marginBottom: 4,
+  },
+  gameControlText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  fullBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F44336',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFF',
+  },
+  fullText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#FFF',
+  },
+  toolButtonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  toolButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+    position: 'relative',
+  },
+  toolButtonIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  toolButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  toolButtonBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#F44336',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#000',
+    paddingHorizontal: 4,
+  },
+  toolButtonBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#FFF',
+  },
   formulaBox: {
     marginVertical: 8,
     padding: 8,
@@ -1368,5 +1552,24 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 9,  // 縮小字體
     fontWeight: '600',
+  },
+  // ⭐ 未來風格按鈕樣式
+  cyberpunkButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  cyberpunkButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
   },
 });

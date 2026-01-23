@@ -8,25 +8,25 @@
 
 /* Begin PBXBuildFile section */
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		1C27079A44F77EE4A3C52DDE /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C8FD56A0910985246E61A7 /* ExpoModulesProvider.swift */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		A221298166D00468653A5FF8 /* libPods-SolefoodMVP.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 121D619FB55BDC6D62101D64 /* libPods-SolefoodMVP.a */; };
+		6A788E6C949C2D8FFF92531D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7AE95F71F9D08833DBEE4360 /* PrivacyInfo.xcprivacy */; };
+		88EB0C33FAECDCA330077E9C /* libPods-SolefoodMVP.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 20BD0689FF66019AE8BF61DF /* libPods-SolefoodMVP.a */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		D3D2D4A1496A9C825CFD8A4A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E00741F77C62E492AA27F2CA /* PrivacyInfo.xcprivacy */; };
-		F0B4C3492CA87082E6D4E51B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD57DAA1EF1EB2CE5691B845 /* ExpoModulesProvider.swift */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		09C36D400779EDCA4B50915B /* Pods-SolefoodMVP.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SolefoodMVP.debug.xcconfig"; path = "Target Support Files/Pods-SolefoodMVP/Pods-SolefoodMVP.debug.xcconfig"; sourceTree = "<group>"; };
-		121D619FB55BDC6D62101D64 /* libPods-SolefoodMVP.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-SolefoodMVP.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07F961A680F5B00A75B9A /* SolefoodMVP.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SolefoodMVP.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = SolefoodMVP/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = SolefoodMVP/Info.plist; sourceTree = "<group>"; };
+		20BD0689FF66019AE8BF61DF /* libPods-SolefoodMVP.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-SolefoodMVP.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3B6C05F3D9824C6027ABE506 /* Pods-SolefoodMVP.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SolefoodMVP.debug.xcconfig"; path = "Target Support Files/Pods-SolefoodMVP/Pods-SolefoodMVP.debug.xcconfig"; sourceTree = "<group>"; };
+		3E72E6CDF32410E2719D7996 /* Pods-SolefoodMVP.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SolefoodMVP.release.xcconfig"; path = "Target Support Files/Pods-SolefoodMVP/Pods-SolefoodMVP.release.xcconfig"; sourceTree = "<group>"; };
+		76C8FD56A0910985246E61A7 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-SolefoodMVP/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		7AE95F71F9D08833DBEE4360 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = SolefoodMVP/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = SolefoodMVP/SplashScreen.storyboard; sourceTree = "<group>"; };
-		AD57DAA1EF1EB2CE5691B845 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-SolefoodMVP/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		E00741F77C62E492AA27F2CA /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = SolefoodMVP/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		E23037240935E650531FBB0E /* Pods-SolefoodMVP.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SolefoodMVP.release.xcconfig"; path = "Target Support Files/Pods-SolefoodMVP/Pods-SolefoodMVP.release.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SolefoodMVP/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* SolefoodMVP-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "SolefoodMVP-Bridging-Header.h"; path = "SolefoodMVP/SolefoodMVP-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -37,7 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A221298166D00468653A5FF8 /* libPods-SolefoodMVP.a in Frameworks */,
+				88EB0C33FAECDCA330077E9C /* libPods-SolefoodMVP.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,7 +53,7 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				E00741F77C62E492AA27F2CA /* PrivacyInfo.xcprivacy */,
+				7AE95F71F9D08833DBEE4360 /* PrivacyInfo.xcprivacy */,
 			);
 			name = SolefoodMVP;
 			sourceTree = "<group>";
@@ -62,17 +62,27 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				121D619FB55BDC6D62101D64 /* libPods-SolefoodMVP.a */,
+				20BD0689FF66019AE8BF61DF /* libPods-SolefoodMVP.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		2D33EBB5F721D327F5FDC2BF /* SolefoodMVP */ = {
+		732CE737DB335621CFA10C9F /* ExpoModulesProviders */ = {
 			isa = PBXGroup;
 			children = (
-				AD57DAA1EF1EB2CE5691B845 /* ExpoModulesProvider.swift */,
+				E72C9E56F140A60DC1171E55 /* SolefoodMVP */,
 			);
-			name = SolefoodMVP;
+			name = ExpoModulesProviders;
+			sourceTree = "<group>";
+		};
+		787FDCE4BA855CE17EA76EB9 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				3B6C05F3D9824C6027ABE506 /* Pods-SolefoodMVP.debug.xcconfig */,
+				3E72E6CDF32410E2719D7996 /* Pods-SolefoodMVP.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -89,8 +99,8 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				C7275BA16331E1149C19F543 /* Pods */,
-				B8DD1955DDD394F01993BB05 /* ExpoModulesProviders */,
+				787FDCE4BA855CE17EA76EB9 /* Pods */,
+				732CE737DB335621CFA10C9F /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -105,14 +115,6 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		B8DD1955DDD394F01993BB05 /* ExpoModulesProviders */ = {
-			isa = PBXGroup;
-			children = (
-				2D33EBB5F721D327F5FDC2BF /* SolefoodMVP */,
-			);
-			name = ExpoModulesProviders;
-			sourceTree = "<group>";
-		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
 			isa = PBXGroup;
 			children = (
@@ -122,14 +124,12 @@
 			path = SolefoodMVP/Supporting;
 			sourceTree = "<group>";
 		};
-		C7275BA16331E1149C19F543 /* Pods */ = {
+		E72C9E56F140A60DC1171E55 /* SolefoodMVP */ = {
 			isa = PBXGroup;
 			children = (
-				09C36D400779EDCA4B50915B /* Pods-SolefoodMVP.debug.xcconfig */,
-				E23037240935E650531FBB0E /* Pods-SolefoodMVP.release.xcconfig */,
+				76C8FD56A0910985246E61A7 /* ExpoModulesProvider.swift */,
 			);
-			name = Pods;
-			path = Pods;
+			name = SolefoodMVP;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -140,13 +140,13 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "SolefoodMVP" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				1D73FC785A71008E2A1D4182 /* [Expo] Configure project */,
+				39D5E9F6D7E08B0EB754F90E /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				2CDD786BCD9D8DD551D1289B /* [CP] Embed Pods Frameworks */,
+				6B722FBE31D142BCF8D62535 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -196,7 +196,7 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				D3D2D4A1496A9C825CFD8A4A /* PrivacyInfo.xcprivacy in Resources */,
+				6A788E6C949C2D8FFF92531D /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,7 +242,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		1D73FC785A71008E2A1D4182 /* [Expo] Configure project */ = {
+		39D5E9F6D7E08B0EB754F90E /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -266,7 +266,7 @@
 			shellPath = /bin/sh;
 			shellScript = "# This script configures Expo modules and generates the modules provider file.\nbash -l -c \"./Pods/Target\\ Support\\ Files/Pods-SolefoodMVP/expo-configure-project.sh\"\n";
 		};
-		2CDD786BCD9D8DD551D1289B /* [CP] Embed Pods Frameworks */ = {
+		6B722FBE31D142BCF8D62535 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -342,7 +342,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				F0B4C3492CA87082E6D4E51B /* ExpoModulesProvider.swift in Sources */,
+				1C27079A44F77EE4A3C52DDE /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -351,7 +351,7 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 09C36D400779EDCA4B50915B /* Pods-SolefoodMVP.debug.xcconfig */;
+			baseConfigurationReference = 3B6C05F3D9824C6027ABE506 /* Pods-SolefoodMVP.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
@@ -387,7 +387,7 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E23037240935E650531FBB0E /* Pods-SolefoodMVP.release.xcconfig */;
+			baseConfigurationReference = 3E72E6CDF32410E2719D7996 /* Pods-SolefoodMVP.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;

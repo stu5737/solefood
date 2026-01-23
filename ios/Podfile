@@ -20,10 +20,6 @@ platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
 
 prepare_react_native_project!
 
-# @generated begin @rnmapbox/maps-rnmapboxmapsimpl - expo prebuild (DO NOT MODIFY) sync-dda8c0f0fd74e065ebee6e08cefd41954f7f9cc4
-$RNMapboxMapsDownloadToken = 'pk.eyJ1Ijoic3R1NTczNyIsImEiOiJjbDNnZTdqdGswcWFtM2NreWVsanAwM2EyIn0.uSN5Ylk5k1Zl3MwkH8HKTw'
-$RNMapboxMapsImpl = 'mapbox'
-# @generated end @rnmapbox/maps-rnmapboxmapsimpl
 target 'SolefoodMVP' do
   use_expo_modules!
 

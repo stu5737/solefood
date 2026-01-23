@@ -11,7 +11,7 @@
  */
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Platform, Animated } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -62,10 +62,15 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D'); // 視角模式：2D 空照圖 or 3D 傾斜
   const [timeTheme, setTimeTheme] = useState<'morning' | 'night'>('night'); // ✅ 時間主題：早晨 or 夜晚
   const [is3DModelReady, setIs3DModelReady] = useState(false); // ✅ 3D 模型是否已準備
-  const [showLabels, setShowLabels] = useState<boolean>(false); // ✅ 地圖標籤顯示（預設：隱藏，突出 H3）
+  const [showLabels, setShowLabels] = useState<boolean>(true); // ✅ 地圖標籤顯示（預設：導航模式，採集時切換為探索模式）
   const [styleRefreshKey, setStyleRefreshKey] = useState(0); // 🚀 開發模式：樣式刷新鍵（強制重新載入地圖）
-  // ✅ 3D 模型固定縮放：20 倍（與箭頭保持一致，放棄動態縮放功能）
-  const MODEL_SCALE: [number, number, number] = [20, 20, 20];
+  // ✅ 3D 模型固定縮放：4 倍
+  const MODEL_SCALE: [number, number, number] = [4, 4, 4];
+  
+  // ✅ 倒數動畫狀態
+  const [countdown, setCountdown] = useState<number | null>(null); // 當前倒數數字（3, 2, 1 或 null）
+  const countdownOpacity = useRef(new Animated.Value(0)).current; // 倒數動畫透明度
+  const countdownScale = useRef(new Animated.Value(1)).current; // 倒數動畫縮放
 
   // Refs
   const cameraRef = useRef<Mapbox.Camera>(null);
@@ -185,6 +190,138 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
     }
   }, [isCollecting]); // ✅ 簡化依賴項
 
+  // ========== 倒數動畫：採集開始/結束時的處理 ==========
+  useEffect(() => {
+    if (!isCollecting) {
+      // 採集結束，重置倒數狀態，切換回導航模式
+      setCountdown(null);
+      countdownOpacity.setValue(0);
+      countdownScale.setValue(1);
+      
+      console.log('[MapboxRealTimeMap] 🛑 採集結束，切換回導航模式');
+      setShowLabels(true); // ✅ 採集結束，切換回導航模式（導航地圖）
+      // ⚠️ showLabels 改變會觸發 MapView key 變化，進而重新掛載，確保圖層順序正確
+      return;
+    }
+
+    // ✅ 採集開始：切換為探索模式，並觸發 MapView 重新掛載以確保圖層順序正確
+    // ⚠️ 關鍵：與採集結束時的行為一致，都通過 showLabels 改變觸發 MapView 重新掛載
+    console.log('[MapboxRealTimeMap] 🎬 採集開始，切換為探索模式');
+    console.log('[MapboxRealTimeMap] 📊 採集開始前狀態:', {
+      isCollecting: true,
+      timeTheme,
+      showLabels,
+      showLabelsWillChange: showLabels !== false, // 檢查 showLabels 是否會改變
+      currentSessionNewHexesSize: currentSessionNewHexes.size,
+      currentSessionH3GeoJsonExists: currentSessionH3GeoJson !== null,
+      currentMapViewKey: `map-${timeTheme}-${showLabels ? 'labels' : 'no-labels'}-refresh-${styleRefreshKey}`,
+    });
+    
+    // 切換為探索模式（導航地圖 → 探索地圖）
+    // ⚠️ showLabels 改變會觸發 MapView key 變化，進而重新掛載，確保圖層順序正確
+    const prevShowLabels = showLabels;
+    setShowLabels(false);
+    console.log('[MapboxRealTimeMap] 🗺️ 已切換為探索模式（showLabels: false），MapView 將重新掛載', {
+      showLabelsChanged: prevShowLabels !== false,
+      mapViewKeyWillChange: prevShowLabels !== false, // 只有當 showLabels 改變時，MapView key 才會改變
+    });
+    
+    // 立即開始倒數動畫（3 -> 2 -> 1 -> 結束）
+    let currentCount = 3;
+    setCountdown(currentCount);
+
+    // 初始動畫
+    countdownOpacity.setValue(0);
+    countdownScale.setValue(0.5);
+    Animated.parallel([
+      Animated.timing(countdownOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.spring(countdownScale, {
+          toValue: 1.2,
+          tension: 50,
+          friction: 3,
+          useNativeDriver: true,
+        }),
+        Animated.spring(countdownScale, {
+          toValue: 1,
+          tension: 50,
+          friction: 3,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+
+    // 第一次淡出
+    setTimeout(() => {
+      Animated.timing(countdownOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }, 600);
+
+    const countdownInterval = setInterval(() => {
+      currentCount -= 1;
+      
+      if (currentCount <= 0) {
+        // 倒數結束
+        clearInterval(countdownInterval);
+        setCountdown(null);
+        countdownOpacity.setValue(0);
+        countdownScale.setValue(1);
+        console.log('[MapboxRealTimeMap] ✅ 倒數動畫結束，採集開始');
+        return;
+      }
+
+      // 更新倒數數字
+      setCountdown(currentCount);
+
+      // 重置動畫值
+      countdownOpacity.setValue(0);
+      countdownScale.setValue(0.5);
+
+      // 播放動畫
+      Animated.parallel([
+        Animated.timing(countdownOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.sequence([
+          Animated.spring(countdownScale, {
+            toValue: 1.2,
+            tension: 50,
+            friction: 3,
+            useNativeDriver: true,
+          }),
+          Animated.spring(countdownScale, {
+            toValue: 1,
+            tension: 50,
+            friction: 3,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start();
+
+      // 1 秒後淡出
+      setTimeout(() => {
+        Animated.timing(countdownOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      }, 600);
+    }, 1000); // 每 1 秒更新一次
+
+    return () => {
+      clearInterval(countdownInterval);
+    };
+  }, [isCollecting, countdownOpacity, countdownScale]);
+
   // ========== 數據一致性驗證與修復 ==========
   // ✅ 新版：驗證並自動修復 exploredHexes 的一致性
   const validateAndRepairDataConsistency = useCallback(() => {
@@ -261,12 +398,11 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
 
   // ========== 3D 模型 URL ==========
   
-  // 🧪 測試模型（Duck.glb）- 用於驗證縮放功能是否正常
-  // ⚠️ 先使用測試模型確認功能正常，再切換回你的模型
-  const modelUrl = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb';
+  // ✅ 你的 3D 模型 URL（固定大小：4 倍，逆時針旋轉 90 度）
+  const modelUrl = 'https://github.com/stu5737/solefood/raw/refs/heads/main/assets/models/user-avator.glb';
   
-  // ✅ 你的模型 URL（確認測試模型正常後，再切換回來）
-  // const modelUrl = 'https://raw.githubusercontent.com/stu5737/solefood/main/assets/models/user-avator.glb';
+  // 🧪 測試模型（Duck.glb）- 備用，用於驗證功能
+  // const modelUrl = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb';
   
   // ========== 3D 模型準備 ==========
   // ✅ 模型已簡化並上傳到 GitHub
@@ -342,7 +478,14 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
 
   // 當前會話 H3 GeoJSON
   const currentSessionH3GeoJson = useMemo(() => {
-    if (!isCollecting || currentSessionNewHexes.size === 0) return null;
+    if (!isCollecting || currentSessionNewHexes.size === 0) {
+      console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 狀態:', {
+        isCollecting,
+        currentSessionNewHexesSize: currentSessionNewHexes.size,
+        result: 'null (未生成)',
+      });
+      return null;
+    }
 
     const hexArray = Array.from(currentSessionNewHexes);
     const features: any[] = [];
@@ -353,7 +496,8 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         if (!coord) return;
 
         const { latitude: lat, longitude: lng } = coord;
-        const circleCoords = getLowPolyCircle(lat, lng, 20, 8);
+        // ✅ 增加邊數（從 8 改為 16），讓圓形更圓滑
+        const circleCoords = getLowPolyCircle(lat, lng, 20, 16);
 
         features.push({
           type: 'Feature',
@@ -368,15 +512,31 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
       }
     });
 
-    if (features.length === 0) return null;
+    if (features.length === 0) {
+      console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 狀態:', {
+        isCollecting,
+        currentSessionNewHexesSize: currentSessionNewHexes.size,
+        result: 'null (features 為空)',
+      });
+      return null;
+    }
 
-    return {
+    const result = {
       type: 'FeatureCollection',
       features,
     };
+    
+    console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 已生成:', {
+      isCollecting,
+      currentSessionNewHexesSize: currentSessionNewHexes.size,
+      featuresCount: features.length,
+      result: 'GeoJSON 已生成',
+    });
+
+    return result;
   }, [isCollecting, currentSessionNewHexes, getLowPolyCircle]);
 
-  // GPS Trail GeoJSON - 即時更新的路徑軌跡（延遲一個點，避免覆蓋游標）
+  // GPS Trail GeoJSON - 即時更新的路徑軌跡（延遲兩個點，避免覆蓋游標）
   const gpsTrailGeoJson = useMemo(() => {
     if (!isCollecting || !gpsHistoryService.isSessionActive()) {
       console.log('[MapboxRealTimeMap] GPS Trail 未顯示：isCollecting =', isCollecting);
@@ -384,14 +544,14 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
     }
 
     const currentSessionPoints = gpsHistoryService.getCurrentSessionTrail();
-    if (!currentSessionPoints || currentSessionPoints.length < 2) {
-      console.log('[MapboxRealTimeMap] GPS Trail 點數不足:', currentSessionPoints?.length || 0);
+    if (!currentSessionPoints || currentSessionPoints.length < 4) {
+      console.log('[MapboxRealTimeMap] GPS Trail 點數不足（需要至少 4 個點）:', currentSessionPoints?.length || 0);
       return null;
     }
 
-    // ✅ 關鍵：去掉最後一個點（當前位置），避免覆蓋游標
+    // ✅ 關鍵：去掉最後兩個點（當前位置和前一個點），避免覆蓋游標
     // 軌跡 = 你「走過的路」，游標 = 你「現在的位置」
-    const trailPoints = currentSessionPoints.slice(0, -1);
+    const trailPoints = currentSessionPoints.slice(0, -2);
     
     if (trailPoints.length < 2) {
       console.log('[MapboxRealTimeMap] GPS Trail 延遲後點數不足:', trailPoints.length);
@@ -399,7 +559,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
     }
 
     const coordinates = trailPoints.map(point => [point.longitude, point.latitude]);
-    console.log('[MapboxRealTimeMap] 🔥 GPS Trail 更新:', coordinates.length, '個點（延遲 1 個點）');
+    console.log('[MapboxRealTimeMap] 🔥 GPS Trail 更新:', coordinates.length, '個點（延遲 2 個點）');
 
     return {
       type: 'FeatureCollection',
@@ -478,10 +638,34 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   
   const mapStyle = height ? { height } : styles.map;
 
+  // 📊 追蹤 MapView key 變化（用於調試圖層順序問題）
+  const mapViewKey = `map-${timeTheme}-${showLabels ? 'labels' : 'no-labels'}-refresh-${styleRefreshKey}`;
+  const prevMapViewKeyRef = useRef<string>(mapViewKey);
+  
+  useEffect(() => {
+    if (prevMapViewKeyRef.current !== mapViewKey) {
+      console.log('[MapboxRealTimeMap] 🔑 MapView key 變化:', {
+        before: prevMapViewKeyRef.current,
+        after: mapViewKey,
+        willRemount: true,
+        currentSessionNewHexesSize: currentSessionNewHexes.size,
+        currentSessionH3GeoJsonExists: currentSessionH3GeoJson !== null,
+        currentSessionH3GeoJsonFeatures: currentSessionH3GeoJson?.features?.length || 0,
+        userModelGeoJsonExists: !!userModelGeoJson,
+        is3DModelReady,
+        isCollecting,
+        timeTheme,
+        showLabels,
+        styleRefreshKey,
+      });
+      prevMapViewKeyRef.current = mapViewKey;
+    }
+  }, [mapViewKey, currentSessionNewHexes.size, currentSessionH3GeoJson, userModelGeoJson, is3DModelReady, isCollecting, timeTheme, showLabels, styleRefreshKey]);
+
   return (
     <View style={[styles.container, mapStyle]}>
       <Mapbox.MapView
-        key={`map-${timeTheme}-${showLabels ? 'labels' : 'no-labels'}-refresh-${styleRefreshKey}`}
+        key={mapViewKey}
         ref={mapRef}
         style={styles.map}
         // ✅ 使用主題樣式（早晨/夜晚），根據 showLabels 狀態切換
@@ -502,6 +686,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         scrollEnabled={PERFORMANCE_CONFIG.scrollEnabled}
         pitchEnabled={PERFORMANCE_CONFIG.pitchEnabled}
         rotateEnabled={PERFORMANCE_CONFIG.rotateEnabled}
+        scaleBarEnabled={false}
       >
         {/* ✅ 關鍵：先註冊模型（必須在所有圖層之前） */}
         {is3DModelReady && (
@@ -605,26 +790,53 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           </Mapbox.ShapeSource>
         )}
         {/* 當前會話 H3 Hexes - 活力橙（只顯示邊框，不顯示填充） */}
-        {currentSessionH3GeoJson && (
-          <Mapbox.ShapeSource id="current-h3" shape={currentSessionH3GeoJson}>
-            {/* ⚠️ 不渲染 fill layer，避免覆蓋 user marker */}
-            {/* 外框：活力橙虛線 */}
-            <Mapbox.LineLayer
-              id="current-h3-stroke"
-              style={{
-                lineColor: timeTheme === 'morning' 
-                  ? MORNING_THEME.currentH3.stroke.color 
-                  : MAP_THEME.currentH3.stroke.color,
-                lineWidth: timeTheme === 'morning' 
-                  ? MORNING_THEME.currentH3.stroke.width 
-                  : MAP_THEME.currentH3.stroke.width,
-                lineOpacity: MAP_THEME.currentH3.stroke.opacity,
-                lineDasharray: MAP_THEME.currentH3.stroke.dasharray,
-                lineSortKey: 5, // ✅ 排序值 5，確保在 user marker (99999) 下方
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
+        {/* ⚠️ 關鍵：採集開始時，即使 currentSessionH3GeoJson 為 null，也要渲染圖層（內容為空），確保圖層註冊順序正確 */}
+        {(() => {
+          const shouldRender = isCollecting; // ✅ 採集中時總是渲染，即使內容為空
+          const hasData = currentSessionH3GeoJson !== null;
+          
+          if (shouldRender) {
+            console.log('[MapboxRealTimeMap] 🎨 渲染 Current H3 圖層:', {
+              layerId: 'current-h3-stroke',
+              lineSortKey: 5,
+              featuresCount: currentSessionH3GeoJson?.features?.length || 0,
+              hasData,
+              isCollecting,
+              timeTheme,
+            });
+          }
+          
+          // ✅ 採集中時總是渲染圖層（即使內容為空），確保圖層註冊順序一致
+          // ⚠️ 當 currentSessionH3GeoJson 為 null 時，使用空的 FeatureCollection 確保圖層始終存在
+          const emptyGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+          return shouldRender ? (
+            <Mapbox.ShapeSource 
+              id="current-h3" 
+              shape={hasData ? currentSessionH3GeoJson! : emptyGeoJson}
+            >
+              {/* ⚠️ 不渲染 fill layer，避免覆蓋 user marker */}
+              {/* 外框：活力橙虛線 */}
+              <Mapbox.LineLayer
+                id="current-h3-stroke"
+                style={{
+                  lineColor: timeTheme === 'morning' 
+                    ? MORNING_THEME.currentH3.stroke.color 
+                    : MAP_THEME.currentH3.stroke.color,
+                  lineWidth: timeTheme === 'morning' 
+                    ? MORNING_THEME.currentH3.stroke.width 
+                    : MAP_THEME.currentH3.stroke.width,
+                  lineOpacity: timeTheme === 'morning' 
+                    ? MORNING_THEME.currentH3.stroke.opacity 
+                    : MAP_THEME.currentH3.stroke.opacity,
+                  lineDasharray: timeTheme === 'morning' 
+                    ? MORNING_THEME.currentH3.stroke.dasharray 
+                    : MAP_THEME.currentH3.stroke.dasharray,
+                  lineSortKey: 5, // ✅ 排序值 5，確保在 user marker (99999) 下方
+                }}
+              />
+            </Mapbox.ShapeSource>
+          ) : null;
+        })()}
         {/* 用戶位置標記 - 永遠存在，使用 opacity 控制顯示/隱藏 */}
         {(() => {
           const hasLocation = !!(currentLocation && currentLocation.coords);
@@ -632,6 +844,15 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           const coords: [number, number] = hasLocation
             ? [currentLocation!.coords.longitude, currentLocation!.coords.latitude]
             : [0, 0];
+
+          console.log('[MapboxRealTimeMap] 🎨 渲染 User Marker 圖層:', {
+            layerId: 'user-marker-top',
+            symbolSortKey: 99999,
+            shouldShow,
+            hasLocation,
+            coords,
+            timeTheme,
+          });
 
           return (
             <Mapbox.ShapeSource
@@ -675,7 +896,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           );
         })()}
 
-        {/* 🎮 用戶 3D 模型（GLB）- 使用你的 GitHub Raw URL */}
+        {/* 🎮 用戶 3D 模型（GLB）- 移到最上層（與 User Marker 一起） */}
         {userModelGeoJson && is3DModelReady && (
           <Mapbox.ShapeSource 
             id="user-3d-model-source" 
@@ -690,16 +911,16 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
                 // ✅ 使用註冊的模型名稱（對應上方 Models 中的 key）
                 modelId: 'user-avatar-model',
                 
-                // ✅ 旋轉（根據運動方向）
+                // ✅ 旋轉（根據運動方向 + 逆時針 90 度）
                 modelRotation: [
                   0,  // pitch (俯仰角)
                   0,  // roll (滾轉角)
-                  ['get', 'rotation']  // yaw (偏航角 = 運動方向)
+                  ['-', ['get', 'rotation'], 90]  // yaw (偏航角 = 運動方向 - 90度，逆時針旋轉)
                 ],
                 
-                // ✅ 縮放（固定大小：20 倍，與箭頭保持一致）
+                // ✅ 縮放（固定大小：4 倍）
                 // ⚠️ 注意：@rnmapbox/maps v10.2.10 不支持動態 modelScale，因此使用固定值
-                modelScale: MODEL_SCALE, // ✅ 固定 20 倍大小
+                modelScale: MODEL_SCALE, // ✅ 固定 4 倍大小
                 
                 // ✅ 模型類型（使用 common-3d，location 可能不是有效值）
                 modelType: 'common-3d',
@@ -722,134 +943,25 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         )}
       </Mapbox.MapView>
 
-      {/* 🏷️ 地圖標籤切換按鈕（探索模式/導航模式） */}
-      {actualMapMode === 'GAME' && (
-        <TouchableOpacity
+      {/* 🎬 倒數動畫（3-2-1）- 採集開始時顯示 */}
+      {countdown !== null && (
+        <Animated.View
           style={[
-            styles.labelsButton,
-            showLabels ? styles.labelsButtonOn : styles.labelsButtonOff
+            styles.countdownContainer,
+            {
+              opacity: countdownOpacity,
+              transform: [{ scale: countdownScale }],
+            },
           ]}
-          activeOpacity={0.85}
-          onPress={() => {
-            const newShowLabels = !showLabels;
-            setShowLabels(newShowLabels);
-            console.log('[MapboxRealTimeMap] 🏷️ 切換標籤顯示:', showLabels, '->', newShowLabels, `(${newShowLabels ? '導航模式' : '探索模式'})`);
-            // ✅ 通過 key 變化強制重新渲染地圖，切換到對應的樣式（有標籤/無標籤）
-          }}
+          pointerEvents="none"
         >
-          <View style={styles.buttonContent}>
-            <Ionicons 
-              name={showLabels ? 'map' : 'map-outline'} 
-              size={22} 
-              color={showLabels ? '#FFFFFF' : '#CCCCCC'} 
-            />
-            <Text style={[styles.viewModeLabel, { color: showLabels ? '#FFFFFF' : '#CCCCCC' }]}>
-              {showLabels ? '導航' : '探索'}
-            </Text>
+          <View style={styles.countdownCircle}>
+            <Text style={styles.countdownText}>{countdown}</Text>
           </View>
-        </TouchableOpacity>
+        </Animated.View>
       )}
 
-      {/* 🚀 開發模式：樣式刷新按鈕（快速開發用） */}
-      {__DEV__ && actualMapMode === 'GAME' && (
-        <TouchableOpacity
-          style={styles.devRefreshButton}
-          activeOpacity={0.85}
-          onPress={() => {
-            setStyleRefreshKey(prev => prev + 1);
-            console.log('[MapboxRealTimeMap] 🚀 開發模式：強制刷新地圖樣式，refreshKey:', styleRefreshKey + 1);
-          }}
-        >
-          <View style={styles.buttonContent}>
-            <Ionicons name="refresh" size={20} color="#FFFFFF" />
-            <Text style={[styles.viewModeLabel, { fontSize: 9 }]}>刷新</Text>
-          </View>
-        </TouchableOpacity>
-      )}
-
-      {/* 🌓 時間主題切換按鈕（早晨/夜晚） */}
-      {actualMapMode === 'GAME' && (
-        <TouchableOpacity
-          style={[
-            styles.themeButton,
-            timeTheme === 'morning' ? styles.themeButtonMorning : styles.themeButtonNight
-          ]}
-          activeOpacity={0.85}
-          onPress={() => {
-            const newTheme = timeTheme === 'morning' ? 'night' : 'morning';
-            setTimeTheme(newTheme);
-            console.log('[MapboxRealTimeMap] 🌓 切換時間主題:', timeTheme, '->', newTheme);
-          }}
-        >
-          <View style={styles.buttonContent}>
-            <Ionicons 
-              name={timeTheme === 'morning' ? 'sunny' : 'moon'} 
-              size={24} 
-              color={MAP_THEME.ui.buttons.icon} 
-            />
-            <Text style={styles.viewModeLabel}>
-              {timeTheme === 'morning' ? '早晨' : '夜晚'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      )}
-
-      {/* 整合按鈕：重新定位 + 視角切換 */}
-      {actualMapMode === 'GAME' && (
-        <TouchableOpacity
-          style={[
-            styles.recenterButton,
-            viewMode === '3D' ? styles.recenterButton3D : styles.recenterButton2D
-          ]}
-          onPress={async () => {
-            console.log('[MapboxRealTimeMap] 🎯 多功能按鈕被點擊');
-            
-            if (!currentLocation || !currentLocation.coords) {
-              console.warn('[MapboxRealTimeMap] ⚠️ 無法操作：currentLocation 為 null');
-              return;
-            }
-            
-            // 切換視角模式
-            const newMode = viewMode === '3D' ? '2D' : '3D';
-            setViewMode(newMode);
-            console.log('[MapboxRealTimeMap] 🔄 切換視角模式:', viewMode, '->', newMode);
-            
-            const coords = [currentLocation.coords.longitude, currentLocation.coords.latitude];
-            const targetPitch = newMode === '3D' ? CAMERA_CONFIG.pitch : 0;
-            
-            // 步驟 1: 暫時禁用 followUserLocation
-            setIsRecenteringManually(true);
-            
-            // 步驟 2: 等待狀態更新
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            // 步驟 3: 執行重新定位 + 視角切換
-            cameraRef.current?.setCamera({
-              centerCoordinate: coords,
-              zoomLevel: CAMERA_CONFIG.zoomLevel,
-              pitch: targetPitch,
-              heading: 0, // ✅ 北方朝上
-              animationDuration: 800,
-            });
-            
-            console.log('[MapboxRealTimeMap] ✅ 已更新:', {
-              mode: newMode,
-              pitch: targetPitch,
-              coords,
-            });
-            
-            // 步驟 4: 動畫完成後，重新啟用 followUserLocation
-            setTimeout(() => {
-              setIsRecenteringManually(false);
-            }, 900);
-          }}
-        >
-          <View style={styles.buttonContent}>
-            <Ionicons name="locate" size={20} color={MAP_THEME.ui.buttons.icon} />
-            <Text style={styles.viewModeLabel}>{viewMode}</Text>
-          </View>
-        </TouchableOpacity>
-      )}
+      {/* 所有按鈕已移至 Omni Dashboard */}
     </View>
   );
 };
@@ -862,110 +974,40 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  recenterButton: {
-    position: 'absolute',
-    bottom: 240, // 往上移，避免與 BackpackCard 重疊 (140 + 80 + 20)
-    right: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    shadowColor: MAP_THEME.ui.buttons.shadow.color,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: MAP_THEME.ui.buttons.shadow.opacity,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  recenterButton3D: {
-    backgroundColor: MAP_THEME.ui.buttons.mode3D.background, // 活力橙 - 3D 模式
-    borderColor: MAP_THEME.ui.buttons.mode3D.border,
-  },
-  recenterButton2D: {
-    backgroundColor: MAP_THEME.ui.buttons.mode2D.background, // 清新綠 - 2D 模式
-    borderColor: MAP_THEME.ui.buttons.mode2D.border,
-  },
-  // === 地圖標籤切換按鈕樣式 ===
-  labelsButton: {
-    position: 'absolute',
-    bottom: 380, // ✅ 在夜晚按鈕上方 (310 + 56 + 14)
-    right: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    shadowColor: MAP_THEME.ui.buttons.shadow.color,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: MAP_THEME.ui.buttons.shadow.opacity,
-    shadowRadius: 6,
-    elevation: 6,
-  },
+  // 所有按鈕樣式已移除，功能移至 Omni Dashboard
   
-  // === 開發模式：樣式刷新按鈕 ===
-  devRefreshButton: {
+  // === 倒數動畫樣式 ===
+  countdownContainer: {
     position: 'absolute',
-    bottom: 450, // ✅ 在標籤切換按鈕上方 (380 + 56 + 14)
-    right: 16,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 152, 0, 0.9)', // 橙色：開發工具
-    borderWidth: 2,
-    borderColor: 'rgba(255, 193, 7, 1)',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: MAP_THEME.ui.buttons.shadow.color,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: MAP_THEME.ui.buttons.shadow.opacity,
-    shadowRadius: 4,
-    elevation: 4,
+    zIndex: 10000, // ✅ 確保在最上層
+    pointerEvents: 'none',
   },
-  labelsButtonOn: {
-    backgroundColor: 'rgba(76, 175, 80, 0.95)', // 綠色：導航模式
-    borderColor: 'rgba(129, 199, 132, 1)',
-  },
-  labelsButtonOff: {
-    backgroundColor: 'rgba(100, 100, 100, 0.85)', // 灰色：探索模式（預設）
-    borderColor: 'rgba(150, 150, 150, 1)',
-  },
-  
-  // === 時間主題按鈕樣式 ===
-  themeButton: {
-    position: 'absolute',
-    bottom: 310, // 在 2D/3D 按鈕上方 (240 + 56 + 14)
-    right: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  countdownCircle: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    shadowColor: MAP_THEME.ui.buttons.shadow.color,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: MAP_THEME.ui.buttons.shadow.opacity,
-    shadowRadius: 6,
-    elevation: 6,
+    borderWidth: 8,
+    borderColor: MAP_THEME.userMarker.arrow.color, // 橙色邊框
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 20,
   },
-  themeButtonMorning: {
-    backgroundColor: 'rgba(255, 200, 100, 0.95)', // 早晨：金色
-    borderColor: 'rgba(255, 220, 150, 1)',
-  },
-  themeButtonNight: {
-    backgroundColor: 'rgba(100, 120, 180, 0.95)', // 夜晚：深藍色
-    borderColor: 'rgba(150, 170, 220, 1)',
-  },
-  buttonContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  viewModeLabel: {
-    fontSize: 10,
+  countdownText: {
+    fontSize: 120,
     fontWeight: '900',
-    color: MAP_THEME.ui.buttons.text,
-    marginTop: 2,
+    color: MAP_THEME.userMarker.arrow.color, // 橙色數字
     fontFamily: 'monospace',
+    textAlign: 'center',
   },
 });

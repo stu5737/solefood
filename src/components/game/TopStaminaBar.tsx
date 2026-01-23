@@ -4,14 +4,14 @@
  */
 
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { usePlayerStore } from '../../stores/playerStore';
 
 interface TopStaminaBarProps {
-  onSettingsPress?: () => void;
+  // 移除 onSettingsPress，設置按鈕已移至右上角
 }
 
-export const TopStaminaBar: React.FC<TopStaminaBarProps> = ({ onSettingsPress }) => {
+export const TopStaminaBar: React.FC<TopStaminaBarProps> = () => {
   const stamina = usePlayerStore((state) => state.stamina);
   const maxStamina = usePlayerStore((state) => state.maxStamina);
 
@@ -49,12 +49,6 @@ export const TopStaminaBar: React.FC<TopStaminaBarProps> = ({ onSettingsPress })
         </Text>
       </View>
 
-      {/* 右側：快捷設置 */}
-      {onSettingsPress && (
-        <TouchableOpacity style={styles.settingsBtn} onPress={onSettingsPress}>
-          <Text style={styles.settingsIcon}>⚙️</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 };
@@ -95,17 +89,5 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontFamily: 'monospace',
     minWidth: 55,
-  },
-  settingsBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  settingsIcon: {
-    fontSize: 16,
   },
 });

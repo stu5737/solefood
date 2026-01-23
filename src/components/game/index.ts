@@ -27,6 +27,8 @@ export { AdRescueModal } from './AdRescueModal';
 export { UnloadModal } from './UnloadModal';
 export { DevDashboard } from './DevDashboard';
 export { SimulatorMode } from './SimulatorMode';
+export { TopStatusCapsules } from './TopStatusCapsules';
+export { BottomActionButton } from './BottomActionButton';
 
 // 暫時保留（未來可能還需要）
 export { MapOverlay } from './MapOverlay';

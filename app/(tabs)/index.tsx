@@ -18,15 +18,12 @@ import {
 } from 'react-native';
 import { UnifiedMap } from '../../src/components/map';
 import {
-  BackpackCard,
-  TopStaminaBar,
-  MainActionButton,
   FloatingTextSystem,
   useFloatingText,
   RescueModal,
-  LeftToolbar,
   DevDashboard,
 } from '../../src/components/game';
+import { GameOverlay, TopHUD } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
@@ -80,6 +77,10 @@ export default function GameScreenV9Plus() {
 
   // 可消耗物品數量（T1 + T2）
   const consumableCount = items.filter((item) => item.tier === 1 || item.tier === 2).length;
+
+  // 運動數據狀態
+  const [currentDistance, setCurrentDistance] = useState(0); // 當前會話總距離（km）
+  const [currentSpeed, setCurrentSpeed] = useState(0); // 當前速度（km/h）
 
   // ========== 初始化 ==========
   useEffect(() => {
@@ -155,6 +156,45 @@ export default function GameScreenV9Plus() {
 
       // 停止磁吸系統
       magnetSystem.stop();
+    };
+  }, []);
+
+  // ========== 追蹤運動數據（距離和速度） ==========
+  useEffect(() => {
+    // 訂閱位置更新來獲取速度和距離
+    const subscription = locationService.subscribeToLocationUpdates((location, distance) => {
+      // 更新速度（m/s 轉換為 km/h）
+      if (location.speed !== undefined && location.speed > 0) {
+        setCurrentSpeed(location.speed * 3.6);
+      } else {
+        setCurrentSpeed(0);
+      }
+    });
+
+    // 定期更新當前會話的總距離
+    const distanceInterval = setInterval(() => {
+      if (gpsHistoryService.isSessionActive()) {
+        const sessionId = gpsHistoryService.getCurrentSessionId();
+        if (sessionId) {
+          const sessions = gpsHistoryService.getAllSessions();
+          const currentSession = sessions.find(s => s.sessionId === sessionId);
+          if (currentSession) {
+            setCurrentDistance(currentSession.totalDistance);
+          } else {
+            // 如果找不到會話，從當前會話點計算總距離
+            const trail = gpsHistoryService.getCurrentSessionTrail();
+            const totalDist = trail.reduce((sum, point) => sum + (point.distance || 0), 0);
+            setCurrentDistance(totalDist);
+          }
+        }
+      } else {
+        setCurrentDistance(0);
+      }
+    }, 1000); // 每秒更新一次
+
+    return () => {
+      subscription?.remove();
+      clearInterval(distanceInterval);
     };
   }, []);
 
@@ -417,51 +457,67 @@ export default function GameScreenV9Plus() {
         </View>
       )}
 
-      {/* ========== 頂部狀態欄 ========== */}
+      {/* ========== 頂部 HUD（體力、背包、距離、速度） ========== */}
       {isReady && !showHistoryTrail && (
-        <SafeAreaView style={styles.topBarContainer} pointerEvents="box-none">
-          <TopStaminaBar onSettingsPress={() => setShowDevDashboard(!showDevDashboard)} />
-        </SafeAreaView>
+        <TopHUD
+          stamina={stamina}
+          maxStamina={usePlayerStore.getState().maxStamina}
+          currentWeight={totalWeight}
+          maxWeight={effectiveMaxWeight}
+          distance={currentDistance}
+          speed={currentSpeed}
+        />
       )}
 
-      {/* ========== 右下角背包卡片 ========== */}
+      {/* ========== 遊戲 HUD 覆蓋層（2.5D Q 版果凍風格） ========== */}
       {isReady && !showHistoryTrail && (
-        <View style={styles.backpackContainer} pointerEvents="box-none">
-          <BackpackCard onPress={() => console.log('打開背包詳情')} />
+        <GameOverlay
+          stamina={stamina}
+          maxStamina={usePlayerStore.getState().maxStamina}
+          currentWeight={totalWeight}
+          maxWeight={effectiveMaxWeight}
+          actionState={gameState === 'COLLECTING' ? 'active' : 'idle'}
+          onActionPress={() => {
+            if (gameState === 'IDLE') {
+              handleStartShift();
+            } else if (gameState === 'COLLECTING') {
+              // 可以添加捕捉/拍照邏輯
+              console.log('[GameScreen] CAPTURE pressed');
+            }
+          }}
+        />
+      )}
+
+      {/* ========== 左下角設置按鈕 ========== */}
+      {isReady && !showHistoryTrail && !showDevDashboard && (
+        <View style={styles.settingsButtonContainer} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={() => setShowDevDashboard(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.settingsIcon}>⚙️</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* ========== 左側工具欄 ========== */}
-      {isReady && !showHistoryTrail && (
-        <View style={styles.leftToolbarContainer} pointerEvents="box-none">
-          <LeftToolbar
-            sessionCount={allSessions.length}
-            consumableCount={consumableCount}
-            isCollecting={gameState === 'COLLECTING'}
-            followMode="NONE"
-            onShowHistory={handleShowHistory}
-            onRecenterMap={handleRecenterMap}
-            onQuickConsume={handleQuickConsume}
-          />
-        </View>
-      )}
-
-      {/* ========== 底部主按鈕 ========== */}
-      {isReady && !showHistoryTrail && (
-        <View style={styles.bottomActionContainer} pointerEvents="box-none">
-          <MainActionButton
-            gameState={gameState}
-            isBackpackFull={isBackpackFull}
-            onStartShift={handleStartShift}
-            onUnload={handleUnload}
-            onPicnic={handlePicnic}
-          />
-        </View>
-      )}
-
-      {/* ========== 開發者控制台 ========== */}
+      {/* ========== 開發者控制台（Omni Dashboard）- 全屏模式 ========== */}
       {isReady && showDevDashboard && !showHistoryTrail && (
-        <DevDashboard visible={showDevDashboard} />
+        <DevDashboard
+          visible={showDevDashboard}
+          onClose={() => setShowDevDashboard(false)}
+          onStartShift={handleStartShift}
+          onUnload={handleUnload}
+          onPicnic={handlePicnic}
+          onShowHistory={handleShowHistory}
+          onRecenterMap={handleRecenterMap}
+          onQuickConsume={handleQuickConsume}
+          onBackpackPress={() => console.log('打開背包詳情')}
+          gameState={gameState}
+          isBackpackFull={isBackpackFull}
+          sessionCount={allSessions.length}
+          consumableCount={consumableCount}
+        />
       )}
 
       {/* ========== 飄字系統 ========== */}
@@ -592,36 +648,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
   },
   // ========== UI 容器 ==========
-  topBarContainer: {
+  settingsButtonContainer: {
     position: 'absolute',
-    top: 12,
-    left: 12,
+    bottom: 20, // ✅ 右下角
     right: 12,
-    zIndex: 2000,
+    zIndex: 2001,
     pointerEvents: 'box-none',
   },
-  backpackContainer: {
-    position: 'absolute',
-    bottom: 140,
-    right: 12,
-    zIndex: 1000,
-    pointerEvents: 'box-none',
-  },
-  leftToolbarContainer: {
-    position: 'absolute',
-    left: 12,
-    bottom: 140,
-    zIndex: 1000,
-    pointerEvents: 'box-none',
-  },
-  bottomActionContainer: {
-    position: 'absolute',
-    bottom: 32,
-    left: 0,
-    right: 0,
+  settingsButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     alignItems: 'center',
-    zIndex: 1000,
-    pointerEvents: 'box-none',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  settingsIcon: {
+    fontSize: 20,
   },
   // ========== 歷史軌跡彈窗樣式 ==========
   modalContainer: {

@@ -133,7 +133,9 @@ export const MORNING_THEME = {
   currentH3: {
     stroke: {
       color: 'rgba(255, 120, 50, 0.6)', // 深橙色邊框
-      width: 1.5,
+      width: 2.5, // ✅ 線寬很粗（可愛風格）
+      opacity: 0.2, // ✅ 透明度（從 0.05 改為 0.2）
+      dasharray: [10, 2], // ✅ 虛線間隔很密（實線長，間隙短，可愛風格）
     },
   },
   gpsTrail: {
@@ -205,9 +207,9 @@ export const MAP_THEME = {
     },
     stroke: {
       color: 'rgba(255, 255, 255, 0.35)', // ✅ 半透明白色，與游標同色系
-      width: 1.2,
-      opacity: 1,
-      dasharray: [3, 2], // 虛線
+      width: 2.5, // ✅ 線寬很粗（可愛風格）
+      opacity: 0.2, // ✅ 透明度（從 0.05 改為 0.2）
+      dasharray: [10, 2], // ✅ 虛線間隔很密（實線長，間隙短，可愛風格）
     },
   },
   
