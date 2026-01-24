@@ -23,7 +23,7 @@ import {
   RescueModal,
   DevDashboard,
 } from '../../src/components/game';
-import { GameOverlay, TopHUD, MapStatsOverlay } from '../../src/components/game-hud';
+import { GameOverlay, TopHUD } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
@@ -168,7 +168,7 @@ export default function GameScreenV9Plus() {
       // 更新速度（m/s 轉換為 km/h）
       if (location.speed !== undefined && location.speed > 0) {
         setCurrentSpeed(location.speed * 3.6);
-      } else {
+                  } else {
         setCurrentSpeed(0);
       }
     });
@@ -479,23 +479,17 @@ export default function GameScreenV9Plus() {
         </View>
       )}
 
-      {/* ========== 頂部 HUD（體力、背包、距離、速度） ========== */}
-      {isReady && !showHistoryTrail && (
+      {/* ========== 頂部 HUD（體力、背包、時間、速率、總距離、總步數 整合極簡）- 開始採集才顯示 ========== */}
+      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && (
         <TopHUD
           stamina={stamina}
           maxStamina={usePlayerStore.getState().maxStamina}
           currentWeight={totalWeight}
           maxWeight={effectiveMaxWeight}
-        />
-      )}
-
-      {/* ========== 地圖統計覆蓋層（速度、步數、運動時間、總距離） ========== */}
-      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && (
-        <MapStatsOverlay
-          speed={currentSpeed}
-          steps={steps}
           exerciseTime={exerciseTime}
-          totalDistance={currentDistance}
+          speed={currentSpeed}
+          totalDistanceKm={currentDistance}
+          steps={steps}
         />
       )}
 
@@ -650,7 +644,7 @@ export default function GameScreenV9Plus() {
                     selectedSessionId={selectedSessionId}
                     showHistoryTrail={true}
                   />
-          </View>
+        </View>
               </>
             )}
           </SafeAreaView>

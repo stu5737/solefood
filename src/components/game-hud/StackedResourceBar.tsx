@@ -51,8 +51,8 @@ export const StackedResourceBar: React.FC<StackedResourceBarProps> = ({
       
       {/* 右側：數字和進度條（分兩排） */}
       <View style={styles.rightSection}>
-        {/* 第一排：數字 */}
-        <Text style={styles.labelText}>{label}</Text>
+        {/* 第一排：數字（與下方 bar 同寬，不超出） */}
+        <Text style={styles.labelText} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
         
         {/* 第二排：進度條 */}
         <View style={styles.progressTrack}>
@@ -86,9 +86,11 @@ const styles = StyleSheet.create({
   },
   rightSection: {
     flex: 1, // 佔據剩餘空間
+    minWidth: 0, // 允許在 flex 中正確縮小
     flexDirection: 'column', // 縱向佈局：數字在上，進度條在下
     justifyContent: 'center', // 垂直居中
-    alignItems: 'flex-start', // 靠左對齊：讓數字和進度條都靠左
+    alignItems: 'stretch', // 讓數字和進度條同寬，對齊左右邊界
+    overflow: 'hidden', // 防止數字超出
   },
   labelText: {
     fontSize: 10,
@@ -101,6 +103,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     marginBottom: 6, // 數字和進度條之間的均勻間距
     textAlign: 'left', // 文字靠左對齊
+    alignSelf: 'stretch', // 與下方 bar 同寬
+    width: '100%', // 不超出下方 bar 的寬度
   },
   progressTrack: {
     width: '100%',

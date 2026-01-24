@@ -164,10 +164,13 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
     fontFamily: 'monospace',
   },
+  // 與 distanceUnit 統一：m、km、km/h 相同字體、大小、字重
   metricUnit: {
     fontSize: 12,
+    lineHeight: 14,
     fontWeight: '600',
-    color: '#FFFFFF',
+    fontFamily: 'monospace',
+    color: 'rgba(255,255,255,0.9)',
     marginTop: 2,
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
@@ -199,10 +202,13 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
     fontFamily: 'monospace',
   },
+  // 與 metricUnit 統一：Meters/Kilometers 與 km/h 同字體、字重，僅因底部主數字較大而略大
   distanceUnit: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#CCCCCC',
+    fontSize: 12,
+    lineHeight: 14,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    color: 'rgba(255,255,255,0.9)',
     marginTop: 4,
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
