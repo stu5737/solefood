@@ -16,7 +16,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { UnifiedMap, type MapboxRealTimeMapRef } from '../../src/components/map';
+import { UnifiedMap, type UnifiedMapRef } from '../../src/components/map';
 import { MAP_ENGINE } from '../../src/config/features';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -82,7 +82,7 @@ export default function GameScreenV9Plus() {
   const consumableCount = items.filter((item) => item.tier === 1 || item.tier === 2).length;
 
   // 地圖 ref（3D/2D 切換 + 回中央，僅 Mapbox 時有效）
-  const mapRef = useRef<MapboxRealTimeMapRef | null>(null);
+  const mapRef = useRef<UnifiedMapRef | null>(null);
 
   // 運動數據狀態
   const [currentDistance, setCurrentDistance] = useState(0); // 當前會話總距離（公里）

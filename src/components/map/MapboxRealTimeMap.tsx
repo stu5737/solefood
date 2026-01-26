@@ -660,6 +660,16 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     return geoJson;
   }, [currentLocation, actualMapMode, is3DModelReady, displayHeadingAdjusted, currentSpeed]);
 
+  // ========== 計算 modelRotation 的固定值 ==========
+  const modelRotationValue = useMemo(() => {
+    // 根據平台應用不同的偏移量（iOS 和 Android 傳感器坐標系統不同）
+    // iOS: 推車正確，保持 -180
+    // Android: 推車需要順時針轉10度，從 -65 改為 -55
+    const platformOffset = Platform.OS === 'ios' ? -180 : -55;
+    const yaw = ((displayHeading + platformOffset) + 360) % 360;
+    return [0, 0, yaw]; // [pitch, roll, yaw]
+  }, [displayHeading]);
+
   // ========== 渲染 ==========
   
   const mapStyle = height ? { height } : styles.map;
@@ -911,7 +921,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
                 textOpacity: shouldShow ? 1 : 0,
                 textPitchAlignment: 'map',
                 textRotationAlignment: 'map',
-                textRotate: displayHeadingAdjusted,
+                textRotate: displayHeading + (Platform.OS === 'ios' ? -90 : -150 + 180), // iOS箭頭需要-90，Android箭頭需要30（-150再轉180度）
                 textAllowOverlap: true,
                 textIgnorePlacement: true,
                 symbolZOrder: 'viewport-y',
@@ -938,11 +948,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
                 modelId: 'user-avatar-model',
                 
                 // ✅ 旋轉（根據運動方向 + 逆時針 90 度）
-                modelRotation: [
-                  0,  // pitch (俯仰角)
-                  0,  // roll (滾轉角)
-                  ['-', ['get', 'rotation'], 90]  // yaw (偏航角 = 運動方向 - 90度，逆時針旋轉)
-                ],
+                modelRotation: modelRotationValue,
                 
                 // ✅ 縮放（固定大小：4 倍）
                 // ⚠️ 注意：@rnmapbox/maps v10.2.10 不支持動態 modelScale，因此使用固定值

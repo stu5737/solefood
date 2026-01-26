@@ -13,7 +13,8 @@
  * 1. 已在 src/config/mapbox.ts 設置 MAPBOX_ACCESS_TOKEN
  * 2. 已重新編譯原生代碼（npx expo run:ios --no-build-cache）
  */
-export const MAP_ENGINE: 'mapbox' | 'react-native-maps' = 'mapbox'; // 👈 改為 'mapbox' 啟用新地圖
+// ✅ 使用 Mapbox 作為地圖引擎（支持 Pitch、3D 建築、賽博龐克風格）
+export const MAP_ENGINE: 'mapbox' | 'react-native-maps' = 'mapbox'; // ✅ 使用 Mapbox
 
 /**
  * 是否啟用 Pokémon GO 風格（僅 Mapbox 支持）

@@ -52,7 +52,7 @@ export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
         {/* 體力條（簡短版，bar 內顯示百分比，無底色） */}
         <View style={styles.staminaCard}>
           <View style={styles.staminaIconContainer}>
-            <StaminaIcon size={48} />
+            <StaminaIcon size={56} />
           </View>
           <View style={styles.staminaBarContainer}>
             <View style={styles.progressTrack}>
@@ -107,8 +107,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   staminaIconContainer: {
-    width: 48, // 放大火焰圖標（從 40 到 48）
-    height: 48,
+    width: 56, // 放大火焰圖標
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -7,7 +7,21 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MAP_ENGINE } from '../../config/features';
 import { RealTimeMap } from './RealTimeMap';
-import { MapboxRealTimeMap, type MapboxRealTimeMapRef } from './MapboxRealTimeMap';
+
+// 條件導入 Mapbox，避免在不需要時加載原生代碼
+// 使用動態 require 來避免在 react-native-maps 模式下觸發 Mapbox 錯誤
+let MapboxRealTimeMap: any = null;
+let MapboxRealTimeMapRef: any = null;
+
+if (MAP_ENGINE === 'mapbox') {
+  try {
+    const mapboxModule = require('./MapboxRealTimeMap');
+    MapboxRealTimeMap = mapboxModule.MapboxRealTimeMap;
+    MapboxRealTimeMapRef = mapboxModule.MapboxRealTimeMapRef;
+  } catch (error) {
+    console.warn('[UnifiedMap] Mapbox 模組載入失敗，將使用 react-native-maps:', error);
+  }
+}
 
 interface UnifiedMapProps {
   showTrail?: boolean;
@@ -18,13 +32,17 @@ interface UnifiedMapProps {
   onCountdownComplete?: () => void;
 }
 
-export const UnifiedMap = React.forwardRef<MapboxRealTimeMapRef, UnifiedMapProps>((props, ref) => {
+// 類型定義（用於 ref）
+// 當使用 Mapbox 時是 MapboxRealTimeMapRef，否則為 any（react-native-maps 不支持 ref）
+export type UnifiedMapRef = any;
+
+export const UnifiedMap = React.forwardRef<UnifiedMapRef, UnifiedMapProps>((props, ref) => {
   // 根據配置選擇地圖引擎
-  if (MAP_ENGINE === 'mapbox') {
+  if (MAP_ENGINE === 'mapbox' && MapboxRealTimeMap) {
     try {
       return <MapboxRealTimeMap {...props} ref={ref} />;
     } catch (error) {
-      console.error('[UnifiedMap] Mapbox 載入失敗，回退到 react-native-maps:', error);
+      console.error('[UnifiedMap] Mapbox 渲染失敗，回退到 react-native-maps:', error);
       return (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>⚠️ Mapbox 載入失敗</Text>
