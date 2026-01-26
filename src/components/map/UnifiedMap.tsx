@@ -7,7 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MAP_ENGINE } from '../../config/features';
 import { RealTimeMap } from './RealTimeMap';
-import { MapboxRealTimeMap } from './MapboxRealTimeMap';
+import { MapboxRealTimeMap, type MapboxRealTimeMapRef } from './MapboxRealTimeMap';
 
 interface UnifiedMapProps {
   showTrail?: boolean;
@@ -15,13 +15,14 @@ interface UnifiedMapProps {
   isCollecting: boolean;
   selectedSessionId?: string | null;
   showHistoryTrail?: boolean;
+  onCountdownComplete?: () => void;
 }
 
-export const UnifiedMap: React.FC<UnifiedMapProps> = (props) => {
+export const UnifiedMap = React.forwardRef<MapboxRealTimeMapRef, UnifiedMapProps>((props, ref) => {
   // 根據配置選擇地圖引擎
   if (MAP_ENGINE === 'mapbox') {
     try {
-      return <MapboxRealTimeMap {...props} />;
+      return <MapboxRealTimeMap {...props} ref={ref} />;
     } catch (error) {
       console.error('[UnifiedMap] Mapbox 載入失敗，回退到 react-native-maps:', error);
       return (
@@ -39,9 +40,9 @@ export const UnifiedMap: React.FC<UnifiedMapProps> = (props) => {
     }
   }
 
-  // 默認使用 react-native-maps
+  // 默認使用 react-native-maps（不轉傳 ref）
   return <RealTimeMap {...props} />;
-};
+});
 
 const styles = StyleSheet.create({
   errorContainer: {

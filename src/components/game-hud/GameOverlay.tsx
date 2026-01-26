@@ -22,6 +22,8 @@ interface GameOverlayProps {
   // 動作狀態
   actionState: 'idle' | 'active';
   onActionPress: () => void;
+  /** 321 倒數是否已完成（採集中且完成後才顯示推車） */
+  countdownComplete?: boolean;
   
   // 可選：自定義圖標
   burnIcon?: React.ReactNode;
@@ -45,17 +47,18 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
   const staminaPercentage = (stamina / maxStamina) * 100;
   const weightPercentage = (currentWeight / maxWeight) * 100;
 
+  // 僅 IDLE 顯示 GO 按鈕；開始採集後消失
+  const showBottomButton = actionState !== 'active';
+
   return (
     <View style={styles.container} pointerEvents="box-none">
-      {/* 底部動作按鈕區域 - 更靠近底部 */}
-      {/* 當 actionState 為 'active' 時，按鈕消失 */}
-      {actionState !== 'active' && (
-        <View style={[styles.bottomSection, { bottom: insets.bottom + 8 }]} pointerEvents="box-none">
-          {/* 使用透明 PNG 圖片按鈕（再放大 120%，保持原始比例） */}
+      {/* 底部 GO 按鈕（去採集）- 僅 IDLE 顯示，開始採集後消失 */}
+      {showBottomButton && (
+        <View style={[styles.bottomSection, { bottom: insets.bottom - 12 }]} pointerEvents="box-none">
           <SolefoodButton
             onPress={onActionPress}
             imageSource={require('../../../assets/images/forage_button.png')}
-            style={{ width: 568, height: 162 }}
+            style={{ width: 382, height: 109 }}
           />
         </View>
       )}
@@ -92,6 +95,10 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /** GO 按鈕包裝器：半透明效果，不擋地圖 */
+  goButtonWrapper: {
+    opacity: 0.75, // 75% 不透明度，讓地圖更清晰可見
   },
   iconEmoji: {
     fontSize: 20,

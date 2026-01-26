@@ -47,7 +47,7 @@ export const TopHUD: React.FC<TopHUDProps> = ({
 
   const backpackIconSize = 56;
   const staminaIconSize = 44;
-  const barWidth = Math.round(168 * 1.04); // 168 * 1.04 ≈ 175
+  const barWidth = Math.round(168 * 1.1); // 168 * 1.1 ≈ 185
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -58,7 +58,7 @@ export const TopHUD: React.FC<TopHUDProps> = ({
   const distanceInM = totalDistanceKm * 1000;
   const distNum = distanceInM >= 1000 ? (distanceInM / 1000).toFixed(1) : String(Math.round(distanceInM));
   const distUnit = distanceInM >= 1000 ? 'km' : 'm';
-  const stepsStr = steps >= 10000 ? `${(steps / 1000).toFixed(1)}k` : steps.toLocaleString();
+  const stepsStr = steps >= 1000 ? `${(steps / 1000).toFixed(1)}k` : String(steps);
 
   return (
     <View style={[styles.container, { top: insets.top + 6 }]} pointerEvents="box-none">
@@ -89,14 +89,14 @@ export const TopHUD: React.FC<TopHUDProps> = ({
         <View style={styles.statsWrap} pointerEvents="box-none">
           <View style={styles.statsPill}>
             <View style={[styles.statItem, styles.statItemClock]}>
-              <View style={styles.iconWrap}>
-                <TimeIcon size={32} />
+              <View style={[styles.iconWrap, styles.iconWrapClock]}>
+                <TimeIcon size={40} />
               </View>
               <Text style={styles.statText} includeFontPadding={false}>{formatTime(exerciseTime)}</Text>
             </View>
             <View style={styles.statItem}>
               <View style={styles.iconWrap}>
-                <SpeedIcon size={32} />
+                <SpeedIcon size={40} />
               </View>
               <View style={[styles.textBlock, styles.textBlockSpeed]}>
                 <Text style={styles.statText} includeFontPadding={false}>{speed >= 10 ? Math.round(speed) : speed.toFixed(1)}</Text>
@@ -104,17 +104,17 @@ export const TopHUD: React.FC<TopHUDProps> = ({
               </View>
             </View>
             <View style={[styles.statItem, styles.statItemDistance]}>
-              <View style={styles.iconWrap}>
-                <DistanceIcon size={32} />
+              <View style={[styles.iconWrap, styles.iconWrapDistance]}>
+                <DistanceIcon size={40} />
               </View>
               <View style={[styles.textBlock, styles.textBlockDistance]}>
                 <Text style={styles.statText} includeFontPadding={false}>{distNum}</Text>
                 <Text style={styles.statUnit} includeFontPadding={false}>{distUnit}</Text>
               </View>
             </View>
-            <View style={styles.statItem}>
+            <View style={[styles.statItem, styles.statItemSteps]}>
               <View style={styles.iconWrap}>
-                <StepsIcon size={32} />
+                <StepsIcon size={40} />
               </View>
               <Text style={[styles.statText, styles.statTextSteps]} includeFontPadding={false}>{stepsStr}</Text>
             </View>
@@ -175,9 +175,21 @@ const styles = StyleSheet.create({
   statItemClock: {
     paddingLeft: 6,
   },
+  /** 時鐘圖標再左移 3px，對齊上方火焰 */
+  iconWrapClock: {
+    marginLeft: -6,
+  },
   /** 總距離圖標往右移，對齊手推車 */
   statItemDistance: {
-    paddingLeft: 13,
+    paddingLeft: 15,
+  },
+  /** 距離（GPS）圖標再向右移 1px（原 4，整體左移 3 後） */
+  iconWrapDistance: {
+    marginLeft: 1,
+  },
+  /** 總步數圖標往右移 */
+  statItemSteps: {
+    paddingLeft: 8,
   },
   /** 速度：圖標與文字間距縮小 */
   statItemSpeed: {
@@ -187,14 +199,15 @@ const styles = StyleSheet.create({
   textBlockSpeed: {
     marginLeft: -2,
   },
-  /** 閃電圖標：右側空間縮小，讓文字可更靠近；左移 3px */
+  /** 閃電圖標：右側空間縮小，讓文字可更靠近；左移 7px（-4 再左 3） */
   iconWrapSpeed: {
     marginRight: -10,
-    marginLeft: -3,
+    marginLeft: -7,
   },
+  /** 四枚 stat 圖標統一 40×40（32 放大 25%），視覺一致 */
   iconWrap: {
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },

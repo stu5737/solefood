@@ -10,7 +10,7 @@
  * - 完整 H3 Hexes 渲染
  */
 
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback, useImperativeHandle } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Platform, Animated } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,15 +38,21 @@ interface MapboxRealTimeMapProps {
   isCollecting: boolean;
   selectedSessionId?: string | null;
   showHistoryTrail?: boolean;
+  onCountdownComplete?: () => void;
 }
 
-export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
+export interface MapboxRealTimeMapRef {
+  toggle3D2DAndRecenter: () => void;
+}
+
+export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRealTimeMapProps>(({
   showTrail = true,
   height,
   isCollecting,
   selectedSessionId,
   showHistoryTrail = false,
-}) => {
+  onCountdownComplete,
+}, ref) => {
   // Store 狀態
   const exploredHexes = useSessionStore((state) => state.exploredHexes);
   const currentSessionNewHexes = useSessionStore((state) => state.currentSessionNewHexes);
@@ -83,6 +89,25 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
   const isMoving = currentSpeed !== null && currentSpeed > SPEED_THRESHOLD;
   const displayHeading = isMoving ? movementHeading : compassHeading;
   const displayHeadingAdjusted = ((displayHeading - 90) % 360 + 360) % 360; // 箭頭符號➤基準朝右，需轉成北方為0
+
+  // ========== 3D/2D 切換 + 使用者拉回中央（暴露給父層按鈕） ==========
+  const toggle3D2DAndRecenter = useCallback(() => {
+    const nextMode = viewMode === '2D' ? '3D' : '2D';
+    setViewMode(nextMode);
+    if (!currentLocation?.coords) return;
+    const pitch = nextMode === '3D' ? CAMERA_CONFIG.pitch : 0;
+    setIsRecenteringManually(true);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [currentLocation.coords.longitude, currentLocation.coords.latitude],
+      zoomLevel: CAMERA_CONFIG.zoomLevel,
+      pitch,
+      animationDuration: 400,
+      animationMode: 'flyTo',
+    });
+    setTimeout(() => setIsRecenteringManually(false), 500);
+  }, [viewMode, currentLocation]);
+
+  useImperativeHandle(ref, () => ({ toggle3D2DAndRecenter }), [toggle3D2DAndRecenter]);
 
   // ========== 位置追蹤 ==========
   useEffect(() => {
@@ -274,6 +299,7 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         countdownOpacity.setValue(0);
         countdownScale.setValue(1);
         console.log('[MapboxRealTimeMap] ✅ 倒數動畫結束，採集開始');
+        onCountdownComplete?.();
         return;
       }
 
@@ -837,8 +863,8 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
             </Mapbox.ShapeSource>
           ) : null;
         })()}
-        {/* 用戶位置標記 - 永遠存在，使用 opacity 控制顯示/隱藏 */}
-        {(() => {
+        {/* 用戶位置標記（白色箭頭）- 僅 IDLE 顯示；按下採集後隱藏，改顯示 3D 推車 */}
+        {!isCollecting && (() => {
           const hasLocation = !!(currentLocation && currentLocation.coords);
           const shouldShow = actualMapMode === 'GAME' && hasLocation;
           const coords: [number, number] = hasLocation
@@ -896,8 +922,8 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
           );
         })()}
 
-        {/* 🎮 用戶 3D 模型（GLB）- 移到最上層（與 User Marker 一起） */}
-        {userModelGeoJson && is3DModelReady && (
+        {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 */}
+        {userModelGeoJson && is3DModelReady && isCollecting && (
           <Mapbox.ShapeSource 
             id="user-3d-model-source" 
             shape={userModelGeoJson}
@@ -961,10 +987,10 @@ export const MapboxRealTimeMap: React.FC<MapboxRealTimeMapProps> = ({
         </Animated.View>
       )}
 
-      {/* 所有按鈕已移至 Omni Dashboard */}
+      {/* 所有按鈕已移至 Omni Dashboard；3D/2D+回中央 按鈕已移至 index 設置列 */}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

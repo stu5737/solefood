@@ -61,6 +61,8 @@ interface RealTimeMapProps {
   selectedSessionId?: string | null;
   // 是否顯示歷史軌跡
   showHistoryTrail?: boolean;
+  // 321 倒數完成回調（RealTimeMap 無倒數，採集開始即呼叫）
+  onCountdownComplete?: () => void;
 }
 
 // 節流函數（性能優化）
@@ -83,6 +85,7 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   endPoint = null,
   selectedSessionId = null,
   showHistoryTrail = false,
+  onCountdownComplete,
 }) => {
   // 從 Store 獲取地圖模式和已探索的 H3 六邊形
   const mapMode = useSessionStore((state) => state.mapMode);
@@ -566,6 +569,11 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       setTimeout(updateSessions, 500);
     }
   }, [isCollecting, isHydrated]);
+
+  // RealTimeMap 無 321 倒數，採集開始即視為「倒數完成」
+  useEffect(() => {
+    if (isCollecting) onCountdownComplete?.();
+  }, [isCollecting, onCountdownComplete]);
   
   // ⭐ 新增：檢查 hydration 狀態
   useEffect(() => {
@@ -1467,7 +1475,8 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             markerKey,
           });
           
-          if (actualMapMode === 'GAME' && markerCoord) {
+          // 僅 IDLE 顯示白色箭頭；按下採集後隱藏（Mapbox 版會改顯示 3D 推車）
+          if (actualMapMode === 'GAME' && markerCoord && !isCollecting) {
             return (
               <UserMarker
                 key={`user-marker-${markerKey}`} // ⭐ 動態 key，採集結束時強制重建

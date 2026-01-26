@@ -19,3 +19,5 @@ export { TimeIcon } from './TimeIcon';
 export { StepsIcon } from './StepsIcon';
 export { GameOverlay } from './GameOverlay';
 export { MapStatsOverlay } from './MapStatsOverlay';
+export { WalletBalanceOverlay } from './WalletBalanceOverlay';
+export { IdleTopHUD } from './IdleTopHUD';

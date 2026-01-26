@@ -16,14 +16,16 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { UnifiedMap } from '../../src/components/map';
+import { UnifiedMap, type MapboxRealTimeMapRef } from '../../src/components/map';
+import { MAP_ENGINE } from '../../src/config/features';
+import { Ionicons } from '@expo/vector-icons';
 import {
   FloatingTextSystem,
   useFloatingText,
   RescueModal,
   DevDashboard,
 } from '../../src/components/game';
-import { GameOverlay, TopHUD } from '../../src/components/game-hud';
+import { GameOverlay, TopHUD, WalletBalanceOverlay, IdleTopHUD } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
@@ -54,7 +56,8 @@ export default function GameScreenV9Plus() {
   // 基礎狀態
   const [isReady, setIsReady] = useState(false);
   const [gameState, setGameState] = useState<GameState>('IDLE');
-  const [showDevDashboard, setShowDevDashboard] = useState(true);
+  const [showDevDashboard, setShowDevDashboard] = useState(false);
+  const [countdownComplete, setCountdownComplete] = useState(false); // 321 倒數結束後才 true
 
   // 歷史軌跡狀態
   const [showHistoryTrail, setShowHistoryTrail] = useState(false);
@@ -77,6 +80,9 @@ export default function GameScreenV9Plus() {
 
   // 可消耗物品數量（T1 + T2）
   const consumableCount = items.filter((item) => item.tier === 1 || item.tier === 2).length;
+
+  // 地圖 ref（3D/2D 切換 + 回中央，僅 Mapbox 時有效）
+  const mapRef = useRef<MapboxRealTimeMapRef | null>(null);
 
   // 運動數據狀態
   const [currentDistance, setCurrentDistance] = useState(0); // 當前會話總距離（公里）
@@ -161,6 +167,13 @@ export default function GameScreenV9Plus() {
     };
   }, []);
 
+  // 當離開採集狀態時，重置 321 倒數完成標記
+  useEffect(() => {
+    if (gameState !== 'COLLECTING') {
+      setCountdownComplete(false);
+    }
+  }, [gameState]);
+
   // ========== 追蹤運動數據（距離和速度） ==========
   useEffect(() => {
     // 訂閱位置更新來獲取速度和距離
@@ -168,7 +181,7 @@ export default function GameScreenV9Plus() {
       // 更新速度（m/s 轉換為 km/h）
       if (location.speed !== undefined && location.speed > 0) {
         setCurrentSpeed(location.speed * 3.6);
-                  } else {
+        } else {
         setCurrentSpeed(0);
       }
     });
@@ -472,15 +485,26 @@ export default function GameScreenV9Plus() {
       {isReady && (
         <View style={styles.mapWrapper}>
           <UnifiedMap
+            ref={mapRef}
             isCollecting={gameState === 'COLLECTING'}
             selectedSessionId={selectedSessionId}
             showHistoryTrail={showHistoryTrail}
+            onCountdownComplete={() => setCountdownComplete(true)}
           />
         </View>
       )}
 
-      {/* ========== 頂部 HUD（體力、背包、時間、速率、總距離、總步數 整合極簡）- 開始採集才顯示 ========== */}
-      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && (
+      {/* ========== 左上角：待機狀態 HUD（體力條 + 代幣，同一排） ========== */}
+      {isReady && !showHistoryTrail && !showDevDashboard && gameState === 'IDLE' && (
+        <IdleTopHUD
+          stamina={stamina}
+          maxStamina={usePlayerStore.getState().maxStamina}
+          balance={1250.0} // TODO: 從 Store 讀取實際餘額
+        />
+      )}
+
+      {/* ========== 頂部 HUD - 321 倒數完成後才顯示 ========== */}
+      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && countdownComplete && (
         <TopHUD
           stamina={stamina}
           maxStamina={usePlayerStore.getState().maxStamina}
@@ -493,7 +517,7 @@ export default function GameScreenV9Plus() {
         />
       )}
 
-      {/* ========== 遊戲 HUD 覆蓋層（2.5D Q 版果凍風格） ========== */}
+      {/* ========== 遊戲 HUD 覆蓋層：IDLE 顯示推車；321 進行中隱藏；321 完成後顯示 TopHUD 與推車 ========== */}
       {isReady && !showHistoryTrail && (
         <GameOverlay
           stamina={stamina}
@@ -512,9 +536,18 @@ export default function GameScreenV9Plus() {
         />
       )}
 
-      {/* ========== 左下角設置按鈕 ========== */}
+      {/* ========== 右下角：3D/2D 切換+回中央（Mapbox）、設置按鈕 ========== */}
       {isReady && !showHistoryTrail && !showDevDashboard && (
         <View style={styles.settingsButtonContainer} pointerEvents="box-none">
+          {MAP_ENGINE === 'mapbox' && (
+            <TouchableOpacity
+              style={[styles.settingsButton, styles.viewModeRecenterButton]}
+              onPress={() => mapRef.current?.toggle3D2DAndRecenter?.()}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="layers-outline" size={22} color="rgba(255,255,255,0.9)" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.settingsButton}
             onPress={() => setShowDevDashboard(true)}
@@ -674,10 +707,15 @@ const styles = StyleSheet.create({
   // ========== UI 容器 ==========
   settingsButtonContainer: {
     position: 'absolute',
-    bottom: 20, // ✅ 右下角
+    bottom: 20,
     right: 12,
     zIndex: 2001,
     pointerEvents: 'box-none',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+  },
+  viewModeRecenterButton: {
+    marginBottom: 8,
   },
   settingsButton: {
     width: 48,

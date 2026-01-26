@@ -7,7 +7,7 @@
 export { UnifiedMap } from './UnifiedMap';
 
 // v10.0 - Mapbox 版本（Pokémon GO 風格）
-export { MapboxRealTimeMap } from './MapboxRealTimeMap';
+export { MapboxRealTimeMap, type MapboxRealTimeMapRef } from './MapboxRealTimeMap';
 
 // v9.0 - 舊版本（react-native-maps）
 export { ExplorationMap } from './ExplorationMap';
