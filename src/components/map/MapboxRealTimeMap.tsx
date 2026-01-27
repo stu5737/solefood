@@ -81,14 +81,176 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   // Refs
   const cameraRef = useRef<Mapbox.Camera>(null);
   const mapRef = useRef<Mapbox.MapView>(null);
+  
+  // ✅ 方向平滑化（解決室內/靜止時 GPS 亂指向）
+  const previousHeadingsRef = useRef<number[]>([]); // 歷史方向數據（用於平均）
+  const lastValidHeadingRef = useRef<number>(0); // 上次有效方向
+  const stationaryCountRef = useRef<number>(0); // 靜止計數器
+  
+  // ✅ 老 Android 設備性能優化
+  const [performanceLevel, setPerformanceLevel] = useState<'high' | 'medium' | 'low'>('high');
+  
+  // 檢測設備性能等級
+  useEffect(() => {
+    const detectPerformanceLevel = () => {
+      if (Platform.OS !== 'android') {
+        setPerformanceLevel('high'); // iOS 默認高性能
+        return;
+      }
+      
+      try {
+        // 檢測 Android API Level（老設備通常 < 28 = Android 9.0）
+        // Android 版本對應：
+        // API 26-27 = Android 8.0-8.1 (Oreo) - 2017年
+        // API 28 = Android 9.0 (Pie) - 2018年
+        // API 29 = Android 10 - 2019年
+        // API 30+ = Android 11+ - 2020年+
+        const androidVersion = Platform.Version as number;
+        
+        // 低端設備：Android 8.0 及以下（API < 28）
+        if (androidVersion < 28) {
+          console.log('[Performance] 🔧 檢測到低端 Android 設備（API < 28），啟用極簡性能模式:', {
+            androidVersion,
+            androidName: `Android ${androidVersion >= 26 ? '8.x' : '7.x 或更早'}`,
+          });
+          setPerformanceLevel('low');
+        } 
+        // 中端設備：Android 9.0-10 (API 28-29)
+        else if (androidVersion < 30) {
+          console.log('[Performance] ⚡ 檢測到中端 Android 設備（API 28-29），啟用平衡性能模式:', {
+            androidVersion,
+            androidName: androidVersion === 28 ? 'Android 9.0' : 'Android 10',
+          });
+          setPerformanceLevel('medium');
+        } 
+        // 高端設備：Android 11+ (API 30+)
+        else {
+          console.log('[Performance] 🚀 檢測到高端 Android 設備（API 30+），使用全功能模式');
+          setPerformanceLevel('high');
+        }
+      } catch (error) {
+        console.warn('[Performance] ⚠️ 無法檢測設備性能，使用默認高性能模式:', error);
+        setPerformanceLevel('high');
+      }
+    };
+    
+    detectPerformanceLevel();
+  }, []);
+  
+  // ✅ 性能優化配置（根據設備等級調整）
+  const performanceSettings = useMemo(() => {
+    if (performanceLevel === 'low') {
+      return {
+        // 低端設備：極簡模式
+        enable3DModel: false, // 禁用 3D 模型
+        enableHeatmap: false, // 禁用熱力圖（改用簡單填充）
+        maxH3Features: 100, // 限制 H3 渲染數量
+        heatmapRadius: 20, // 較小的熱力圖半徑
+        heatmapIntensity: 0.3, // 降低熱力圖強度
+        updateThrottle: 2000, // 2 秒更新一次（降低更新頻率）
+        enable3DBuildings: false, // 禁用 3D 建築
+        pitch: 0, // 強制 2D 模式（無傾斜）
+        zoomLevel: 16, // 降低縮放級別（減少渲染負擔）
+      };
+    } else if (performanceLevel === 'medium') {
+      return {
+        // 中端設備：平衡模式
+        enable3DModel: true,
+        enableHeatmap: true,
+        maxH3Features: 500,
+        heatmapRadius: 30,
+        heatmapIntensity: 0.5,
+        updateThrottle: 1000, // 1 秒更新一次
+        enable3DBuildings: false,
+        pitch: CAMERA_CONFIG.pitch,
+        zoomLevel: CAMERA_CONFIG.zoomLevel,
+      };
+    } else {
+      // 高端設備：全功能模式
+      return {
+        enable3DModel: true,
+        enableHeatmap: true,
+        maxH3Features: Infinity,
+        heatmapRadius: 45,
+        heatmapIntensity: 1.0,
+        updateThrottle: 500,
+        enable3DBuildings: PERFORMANCE_CONFIG.enable3DBuildings,
+        pitch: CAMERA_CONFIG.pitch,
+        zoomLevel: CAMERA_CONFIG.zoomLevel,
+      };
+    }
+  }, [performanceLevel]);
 
   // 實際地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
   const SPEED_THRESHOLD = 0.5; // m/s，低於此速度視為靜止
+  const MIN_HEADING_CHANGE = 15; // 度，靜止時最小方向變化閾值（小於此值視為噪音）
+  const HEADING_SMOOTH_WINDOW = 5; // 平滑窗口：取最近 5 次方向的平均值
+  const STATIONARY_LOCK_COUNT = 10; // 靜止鎖定：連續 10 次靜止後，完全鎖定方向
+  
   const currentSpeed = currentLocation?.coords?.speed ?? 0;
   const isMoving = currentSpeed !== null && currentSpeed > SPEED_THRESHOLD;
-  const displayHeading = isMoving ? movementHeading : compassHeading;
+  
+  // ✅ 平滑化後的方向（解決亂指向問題）
+  const displayHeading = (() => {
+    const rawHeading = isMoving ? movementHeading : compassHeading;
+    
+    // 靜止狀態處理
+    if (!isMoving) {
+      stationaryCountRef.current += 1;
+      
+      // 如果連續靜止超過閾值，完全鎖定方向（不再變化）
+      if (stationaryCountRef.current > STATIONARY_LOCK_COUNT) {
+        console.log('[Heading] 🔒 靜止鎖定：方向固定為', lastValidHeadingRef.current);
+        return lastValidHeadingRef.current;
+      }
+      
+      // 檢查方向變化是否足夠大（過濾小幅抖動）
+      const headingDiff = Math.abs(rawHeading - lastValidHeadingRef.current);
+      const normalizedDiff = Math.min(headingDiff, 360 - headingDiff); // 處理 0°/360° 邊界
+      
+      if (normalizedDiff < MIN_HEADING_CHANGE) {
+        console.log('[Heading] ⚠️ 靜止時方向變化過小，視為噪音：', normalizedDiff, '°');
+        return lastValidHeadingRef.current; // 保持上次有效方向
+      }
+    } else {
+      // 移動時重置靜止計數器
+      stationaryCountRef.current = 0;
+    }
+    
+    // 移動平均平滑化
+    previousHeadingsRef.current.push(rawHeading);
+    if (previousHeadingsRef.current.length > HEADING_SMOOTH_WINDOW) {
+      previousHeadingsRef.current.shift(); // 保持窗口大小
+    }
+    
+    // 計算平均方向（處理角度環形特性）
+    const smoothedHeading = averageAngles(previousHeadingsRef.current);
+    lastValidHeadingRef.current = smoothedHeading;
+    
+    return smoothedHeading;
+  })();
+  
   const displayHeadingAdjusted = ((displayHeading - 90) % 360 + 360) % 360; // 箭頭符號➤基準朝右，需轉成北方為0
+  
+  // ✅ 輔助函數：計算角度平均值（處理 0°/360° 邊界問題）
+  function averageAngles(angles: number[]): number {
+    if (angles.length === 0) return 0;
+    
+    let sinSum = 0;
+    let cosSum = 0;
+    
+    for (const angle of angles) {
+      const rad = (angle * Math.PI) / 180;
+      sinSum += Math.sin(rad);
+      cosSum += Math.cos(rad);
+    }
+    
+    const avgRad = Math.atan2(sinSum / angles.length, cosSum / angles.length);
+    const avgDeg = (avgRad * 180) / Math.PI;
+    
+    return (avgDeg + 360) % 360; // 確保結果在 0-360 範圍內
+  }
 
   // ========== 3D/2D 切換 + 使用者拉回中央（暴露給父層按鈕） ==========
   const toggle3D2DAndRecenter = useCallback(() => {
@@ -147,7 +309,10 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               location.coords.heading !== undefined &&
               location.coords.heading >= 0
             ) {
+              console.log('[Heading] 🏃 移動中，更新運動方向:', location.coords.heading, '°, 速度:', location.coords.speed.toFixed(2), 'm/s');
               setMovementHeading(location.coords.heading);
+            } else if (location.coords.speed !== null && location.coords.speed <= SPEED_THRESHOLD) {
+              console.log('[Heading] 🛑 靜止中，速度:', location.coords.speed.toFixed(2), 'm/s');
             }
             
             // 如果正在採集，記錄到 GPS 歷史
@@ -474,14 +639,30 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   // ========== 歷史 H3 GeoJSON（新版：基於 exploredHexes） ==========
   // ✅ 修復：使用 exploredHexes 作為唯一數據源
   // ✅ 不再依賴 historySessions，避免數據不一致
+  // ✅ 性能優化：老設備限制渲染數量
   const historyH3GeoJson = useMemo(() => {
     if (actualMapMode !== 'GAME') return null;
+    
+    // ✅ 性能優化：限制 H3 數量（老設備）
+    let hexesToRender = Array.from(exploredHexes);
+    if (performanceSettings.maxH3Features < Infinity && hexesToRender.length > performanceSettings.maxH3Features) {
+      // 隨機採樣，保留最近的 H3（優先保留）
+      const sortedHexes = hexesToRender.slice(-performanceSettings.maxH3Features);
+      hexesToRender = sortedHexes;
+      console.log('[Performance] 🔧 限制 H3 渲染數量:', {
+        original: exploredHexes.size,
+        limited: hexesToRender.length,
+        performanceLevel,
+      });
+    }
+    
+    const limitedHexes = new Set(hexesToRender);
     
     // 獲取當前主題配置
     const theme = timeTheme === 'morning' ? MORNING_THEME : NIGHT_THEME;
     
     // 使用獨立的 H3 渲染模塊
-    const result = generateH3GeoJson(exploredHexes, {
+    const result = generateH3GeoJson(limitedHexes, {
       maxOpacity: theme.historyH3.fill.opacityRange.max,
       minOpacity: theme.historyH3.fill.opacityRange.min,
       nonLinear: true, // 使用非線性漸變（平方）
@@ -491,16 +672,17 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     if (result) {
       const stats = getH3GeoJsonStats(result);
       console.log('[MapboxRealTimeMap] ✅ historyH3GeoJson 已生成（基於 exploredHexes）:', {
-        hexesCount: exploredHexes.size,
+        hexesCount: limitedHexes.size,
         featuresCount: result.features.length,
         stats,
+        performanceLevel,
       });
     } else {
-      console.log('[MapboxRealTimeMap] ⚠️ historyH3GeoJson 為空（exploredHexes.size =', exploredHexes.size, '）');
+      console.log('[MapboxRealTimeMap] ⚠️ historyH3GeoJson 為空（exploredHexes.size =', limitedHexes.size, '）');
     }
     
     return result;
-  }, [actualMapMode, exploredHexes, timeTheme]);
+  }, [actualMapMode, exploredHexes, timeTheme, performanceSettings, performanceLevel]);
 
   // 當前會話 H3 GeoJSON
   const currentSessionH3GeoJson = useMemo(() => {
@@ -724,8 +906,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         rotateEnabled={PERFORMANCE_CONFIG.rotateEnabled}
         scaleBarEnabled={false}
       >
-        {/* ✅ 關鍵：先註冊模型（必須在所有圖層之前） */}
-        {is3DModelReady && (
+        {/* ✅ 關鍵：先註冊模型（必須在所有圖層之前）+ 性能優化 */}
+        {is3DModelReady && performanceSettings.enable3DModel && (
           <Mapbox.Models
             models={{
               'user-avatar-model': modelUrl, // ✅ 殺手三修復：直接使用 https:// URL，不用本地文件
@@ -739,11 +921,11 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           />
         )}
 
-        {/* 🎮 Pokémon GO 風格攝影機 - 支援 2D/3D 切換 */}
+        {/* 🎮 Pokémon GO 風格攝影機 - 支援 2D/3D 切換 + 性能優化 */}
         <Mapbox.Camera
           ref={cameraRef}
-          zoomLevel={CAMERA_CONFIG.zoomLevel}
-          pitch={viewMode === '3D' ? CAMERA_CONFIG.pitch : 0} // 3D: 65°, 2D: 0°
+          zoomLevel={performanceSettings.zoomLevel} // ✅ 根據性能等級調整縮放
+          pitch={viewMode === '3D' ? performanceSettings.pitch : 0} // ✅ 低端設備強制 2D（pitch = 0）
           heading={0} // ✅ 北方朝上，不跟隨設備旋轉（三角形會自己根據運動方向旋轉）
           followUserLocation={actualMapMode === 'GAME' && !isRecenteringManually}
           followUserMode={CAMERA_CONFIG.followUserMode} // 兩種模式都使用 'course' 模式
@@ -757,51 +939,67 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           }
         />
 
-        {/* 歷史 H3 Hexes - 迷霧效果（支援早晚主題切換） */}
+        {/* 歷史 H3 Hexes - 迷霧效果（支援早晚主題切換）+ 性能優化 */}
         {historyH3GeoJson && (
           <Mapbox.ShapeSource id="history-h3" shape={historyH3GeoJson}>
-            <Mapbox.HeatmapLayer
-              id="history-h3-heatmap"
-              style={{
-                // ✅ 根據時間主題動態切換顏色
-                heatmapColor: timeTheme === 'morning' 
-                  ? MORNING_THEME.historyH3.heatmapColor 
-                  : NIGHT_THEME.historyH3.heatmapColor,
-                // ✅ 根據縮放級別動態調整半徑：地圖縮很小時（zoom 6-9）使用更小的半徑
-                heatmapRadius: [
-                  'interpolate',
-                  ['linear'],
-                  ['zoom'],
-                  6, 10,    // zoom 6: 半徑 10px（地圖縮很小時，渲染細緻）
-                  8, 15,    // zoom 8: 半徑 15px
-                  10, 25,   // zoom 10: 半徑 25px
-                  13, 35,   // zoom 13: 半徑 35px
-                  15, 45,   // zoom 15: 半徑 45px
-                  18, 60    // zoom 18: 半徑 60px
-                ],
-                // ✅ 權重：根據 weight 屬性調整每個點的影響力
-                heatmapWeight: [
-                  'interpolate',
-                  ['linear'],
-                  ['get', 'weight'],
-                  0, 0,
-                  1, 1
-                ],
-                // ✅ 根據縮放級別動態調整強度：地圖縮很小時降低強度，避免渲染太粗
-                heatmapIntensity: [
-                  'interpolate',
-                  ['linear'],
-                  ['zoom'],
-                  6, 0.2,   // zoom 6: 強度 0.2（地圖縮很小時，很柔和）
-                  8, 0.3,   // zoom 8: 強度 0.3
-                  10, 0.5,  // zoom 10: 強度 0.5
-                  13, 0.65, // zoom 13: 強度 0.65
-                  15, 0.8,  // zoom 15: 強度 0.8
-                  18, 1.0   // zoom 18: 強度 1.0（完全強度）
-                ],
-                heatmapOpacity: 1,
-              }}
-            />
+            {performanceSettings.enableHeatmap ? (
+              // ✅ 高性能設備：使用熱力圖（視覺效果好）
+              <Mapbox.HeatmapLayer
+                id="history-h3-heatmap"
+                style={{
+                  // ✅ 根據時間主題動態切換顏色
+                  heatmapColor: timeTheme === 'morning' 
+                    ? MORNING_THEME.historyH3.heatmapColor 
+                    : NIGHT_THEME.historyH3.heatmapColor,
+                  // ✅ 根據性能等級調整半徑（老設備使用更小的半徑）
+                  heatmapRadius: [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    6, performanceSettings.heatmapRadius * 0.2,
+                    8, performanceSettings.heatmapRadius * 0.3,
+                    10, performanceSettings.heatmapRadius * 0.5,
+                    13, performanceSettings.heatmapRadius * 0.7,
+                    15, performanceSettings.heatmapRadius * 0.85,
+                    18, performanceSettings.heatmapRadius
+                  ],
+                  // ✅ 權重：根據 weight 屬性調整每個點的影響力
+                  heatmapWeight: [
+                    'interpolate',
+                    ['linear'],
+                    ['get', 'weight'],
+                    0, 0,
+                    1, 1
+                  ],
+                  // ✅ 根據性能等級調整強度（老設備降低強度）
+                  heatmapIntensity: [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    6, performanceSettings.heatmapIntensity * 0.2,
+                    8, performanceSettings.heatmapIntensity * 0.3,
+                    10, performanceSettings.heatmapIntensity * 0.5,
+                    13, performanceSettings.heatmapIntensity * 0.65,
+                    15, performanceSettings.heatmapIntensity * 0.8,
+                    18, performanceSettings.heatmapIntensity
+                  ],
+                  heatmapOpacity: 1,
+                }}
+              />
+            ) : (
+              // ✅ 低端設備：使用簡單填充層（性能更好）
+              <Mapbox.FillLayer
+                id="history-h3-fill"
+                style={{
+                  fillColor: timeTheme === 'morning' 
+                    ? MORNING_THEME.historyH3.fill.color 
+                    : NIGHT_THEME.historyH3.fill.color,
+                  fillOpacity: timeTheme === 'morning' 
+                    ? MORNING_THEME.historyH3.fill.opacityRange.max 
+                    : NIGHT_THEME.historyH3.fill.opacityRange.max,
+                }}
+              />
+            )}
           </Mapbox.ShapeSource>
         )}
 
@@ -932,8 +1130,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           );
         })()}
 
-        {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 */}
-        {userModelGeoJson && is3DModelReady && isCollecting && (
+        {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 + 性能優化 */}
+        {userModelGeoJson && is3DModelReady && isCollecting && performanceSettings.enable3DModel && (
           <Mapbox.ShapeSource 
             id="user-3d-model-source" 
             shape={userModelGeoJson}
