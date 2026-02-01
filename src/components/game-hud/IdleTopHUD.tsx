@@ -1,6 +1,6 @@
 /**
  * IdleTopHUD - 待機狀態頂部 HUD
- * 顯示：右上角 - 簡短體力條（bar 內顯示百分比，無底色）+ 代幣餘額（同一排）
+ * 顯示：右上角 - 代幣餘額（左）+ 簡短體力條（右，bar 內顯示百分比）
  * 設計：簡潔、不擋地圖
  */
 
@@ -15,12 +15,15 @@ interface IdleTopHUDProps {
   maxStamina: number;
   /** $SOIL 餘額 */
   balance?: number;
+  /** 嵌入模式：不佔位，由外層與 UserProfileHUD 同一列排版 */
+  embedded?: boolean;
 }
 
 export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
   stamina,
   maxStamina,
   balance = 1250.0,
+  embedded = false,
 }) => {
   const insets = useSafeAreaInsets();
   const staminaPercentage = (stamina / maxStamina) * 100;
@@ -40,50 +43,66 @@ export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
     };
   });
 
-  // 格式化餘額顯示（千分位，無小數點）
+  // 格式化餘額顯示：>= 1,000,000 用 M，>= 1,000 用 k，否則顯示原數字
   const formatBalance = (value: number) => {
-    return Math.round(value).toLocaleString('en-US');
+    const n = Math.round(value);
+    if (n >= 1_000_000) {
+      const m = n / 1_000_000;
+      return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+    }
+    if (n >= 1_000) {
+      const k = n / 1_000;
+      return k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
+    }
+    return String(n);
   };
 
-  return (
-    <View style={[styles.container, { top: insets.top + 16, right: 16 }]} pointerEvents="box-none">
-      {/* 體力條和代幣（同一排，靠在一起） */}
-      <View style={styles.hudRow}>
-        {/* 體力條（簡短版，bar 內顯示百分比，無底色） */}
-        <View style={styles.staminaCard}>
-          <View style={styles.staminaIconContainer}>
-            <StaminaIcon size={48} />
-          </View>
-          <View style={styles.staminaBarContainer}>
-            <View style={styles.progressTrack}>
-              <Animated.View
-                style={[
-                  styles.progressFill,
-                  { backgroundColor: '#FF6B35' },
-                  animatedFillStyle,
-                ]}
-              />
-              {/* 百分比文字（覆蓋在 bar 上） */}
-              <Text style={styles.percentageText}>{Math.round(staminaPercentage)}%</Text>
-            </View>
-          </View>
+  const hudRow = (
+    <View style={styles.hudRow}>
+      {/* 代幣餘額（左側，數字外框與體力條呼應） */}
+      <View style={styles.balanceCard}>
+        <View style={styles.balanceIconContainer}>
+          <Image
+            source={require('../../../assets/images/soil_token_icon.png')}
+            style={styles.tokenIcon}
+            resizeMode="contain"
+            onError={(error) => {
+              console.warn('[IdleTopHUD] $SOIL 圖標加載失敗:', error);
+            }}
+          />
         </View>
-
-        {/* 代幣餘額（緊接在體力條右側） */}
-        <View style={styles.balanceCard}>
-          <View style={styles.balanceIconContainer}>
-            <Image
-              source={require('../../../assets/images/soil_token_icon.png')}
-              style={styles.tokenIcon}
-              resizeMode="contain"
-              onError={(error) => {
-                console.warn('[IdleTopHUD] $SOIL 圖標加載失敗:', error);
-              }}
-            />
-          </View>
+        <View style={styles.balanceTrack}>
           <Text style={styles.balanceText}>{formatBalance(balance)}</Text>
         </View>
       </View>
+
+      {/* 體力條（簡短版，bar 內顯示百分比，無底色，右側） */}
+      <View style={styles.staminaCard}>
+        <View style={styles.staminaIconContainer}>
+          <StaminaIcon size={48} />
+        </View>
+        <View style={styles.staminaBarContainer}>
+          <View style={styles.progressTrack}>
+            <Animated.View
+              style={[
+                styles.progressFill,
+                { backgroundColor: '#FF6B35' },
+                animatedFillStyle,
+              ]}
+            />
+            <Text style={styles.percentageText}>{Math.round(staminaPercentage)}%</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  if (embedded) {
+    return hudRow;
+  }
+  return (
+    <View style={[styles.container, { top: insets.top + 16, right: 16 }]} pointerEvents="box-none">
+      {hudRow}
     </View>
   );
 };
@@ -143,8 +162,15 @@ const styles = StyleSheet.create({
   balanceCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    // 無底色、無邊框、無陰影，保持透明（與體力條一致）
     gap: 8,
+  },
+  balanceTrack: {
+    width: 60,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   balanceIconContainer: {
     width: 56, // 放大資產圖標（從 48 到 56）
@@ -157,7 +183,7 @@ const styles = StyleSheet.create({
     height: 56,
   },
   balanceText: {
-    fontSize: 14, // 稍微減小資產數字字體（從 16 到 14），與體力百分比協調
+    fontSize: 13,
     fontWeight: '700',
     color: '#FFF',
     fontFamily: 'monospace',

@@ -32,7 +32,7 @@ import { NEAR_RESTAURANT_RADIUS_M, RESTAURANT_DATA_SOURCE, type RestaurantPoint 
 import { calculateDistanceMeters } from '../../src/utils/geo';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GameOverlay, TopHUD, WalletBalanceOverlay, IdleTopHUD } from '../../src/components/game-hud';
+import { GameOverlay, TopHUD, WalletBalanceOverlay, IdleTopHUD, UserProfileHUD, UserProfileModal } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
 import { TrailStatsPanel } from '../../src/components/map/TrailStatsPanel';
@@ -90,6 +90,7 @@ export default function GameScreenV9Plus() {
   const [rescueDesc, setRescueDesc] = useState('');
   const [rescueReward, setRescueReward] = useState('');
   const [pendingItem, setPendingItem] = useState<Item | null>(null);
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
 
   // 飄字系統
   const { texts: floatingTexts, showFloatingText, removeText } = useFloatingText();
@@ -618,12 +619,39 @@ export default function GameScreenV9Plus() {
         </View>
       )}
 
-      {/* ========== 左上角：待機狀態 HUD（體力條 + 代幣，同一排） ========== */}
+      {/* ========== IDLE 模式：頂部一列整合（左頭像+距離 / 右代幣+體力），與右側設計一致 ========== */}
       {isReady && !showHistoryTrail && !showDevDashboard && gameState === 'IDLE' && (
-        <IdleTopHUD
-          stamina={stamina}
-          maxStamina={usePlayerStore.getState().maxStamina}
-          balance={balance}
+        <View
+          style={[
+            styles.idleTopBar,
+            { top: insets.top + 16, paddingHorizontal: 16 },
+          ]}
+          pointerEvents="box-none"
+        >
+          <UserProfileHUD
+            embedded
+            totalDistanceKm={allSessions.reduce((acc, s) => acc + s.totalDistance, 0)}
+            notificationCount={0}
+            onPress={() => setProfileModalVisible(true)}
+          />
+          <IdleTopHUD
+            embedded
+            stamina={stamina}
+            maxStamina={usePlayerStore.getState().maxStamina}
+            balance={balance}
+          />
+        </View>
+      )}
+
+      {/* ========== 非 IDLE（採集中）：左上角僅頭像 HUD ========== */}
+      {isReady && !showHistoryTrail && !showDevDashboard && gameState !== 'IDLE' && (
+        <UserProfileHUD
+          totalDistanceKm={
+            allSessions.reduce((acc, s) => acc + s.totalDistance, 0) +
+            (gameState === 'COLLECTING' ? currentDistance : 0)
+          }
+          notificationCount={0}
+          onPress={() => setProfileModalVisible(true)}
         />
       )}
 
@@ -800,6 +828,12 @@ export default function GameScreenV9Plus() {
         }}
       />
 
+      {/* ========== 個人資料 Modal（從右側滑入，點左上角頭像開啟） ========== */}
+      <UserProfileModal
+        visible={profileModalVisible}
+        onClose={() => setProfileModalVisible(false)}
+      />
+
       {/* ========== 多餐廳選擇彈窗（圖標重疊時點到多個，讓使用者選一個） ========== */}
       <Modal
         visible={restaurantPickerList != null && restaurantPickerList.length > 0}
@@ -952,6 +986,15 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: '#1A1A1A',
+  },
+  idleTopBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 2000,
   },
   // ========== UI 容器 ==========
   callTruckButtonContainer: {

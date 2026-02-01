@@ -21,3 +21,5 @@ export { GameOverlay } from './GameOverlay';
 export { MapStatsOverlay } from './MapStatsOverlay';
 export { WalletBalanceOverlay } from './WalletBalanceOverlay';
 export { IdleTopHUD } from './IdleTopHUD';
+export { UserProfileHUD } from './UserProfileHUD';
+export { UserProfileModal } from './UserProfileModal';
