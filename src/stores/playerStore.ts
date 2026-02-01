@@ -7,8 +7,11 @@
  */
 
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STAMINA, CAPACITY, HYGIENE, ZERO_TOLERANCE } from '../utils/constants';
 import { calculateMaxCapacity } from '../core/math/weight';
+
+const USER_CODE_KEY = '@solefood/user-code';
 
 /**
  * PlayerState 介面定義
@@ -37,6 +40,9 @@ interface PlayerState {
 
   // 錢包（$SOIL 代幣）
   balance: number;          // 當前餘額（卸貨收益會累加至此）
+
+  // 用戶碼（留存／訪談用，系統產生並持久化）
+  userCode: string | null;  // 例：SF-A1B2C3
 }
 
 /**
@@ -96,6 +102,9 @@ interface PlayerActions {
    * @param amount - 增加數量（$SOIL）
    */
   addBalance: (amount: number) => void;
+
+  /** 取得或建立用戶碼（首次進入時產生並寫入 AsyncStorage，用於留存率與訪談辨識） */
+  getOrCreateUserCode: () => Promise<string>;
 }
 
 type PlayerStore = PlayerState & PlayerActions;
@@ -113,6 +122,7 @@ const initialState: PlayerState = {
   isGhost: false,
   isImmobilized: false,
   balance: 0,              // 初始 $SOIL 餘額
+  userCode: null,          // 由 getOrCreateUserCode 填入
 };
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -291,5 +301,25 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set((state) => ({
       balance: Math.max(0, state.balance + amount),
     }));
+  },
+
+  getOrCreateUserCode: async () => {
+    const existing = get().userCode;
+    if (existing) return existing;
+    try {
+      const stored = await AsyncStorage.getItem(USER_CODE_KEY);
+      if (stored) {
+        set({ userCode: stored });
+        return stored;
+      }
+      const code = 'SF-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+      await AsyncStorage.setItem(USER_CODE_KEY, code);
+      set({ userCode: code });
+      return code;
+    } catch (e) {
+      const fallback = 'SF-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+      set({ userCode: fallback });
+      return fallback;
+    }
   },
 }));

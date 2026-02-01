@@ -112,6 +112,11 @@ export default function GameScreenV9Plus() {
 
   // ========== 初始化 ==========
   useEffect(() => {
+    // 預先載入／建立用戶碼（Modal 開啟時即可顯示）
+    usePlayerStore.getState().getOrCreateUserCode();
+  }, []);
+
+  useEffect(() => {
     const initialize = async () => {
       try {
         // 初始化服務

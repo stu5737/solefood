@@ -1,6 +1,6 @@
 /**
  * UserProfileModal - 滿版個人資料／使用者空間（寶可夢 GO 風格）
- * 從下往上滑入全螢幕，點擊頭像 HUD 開啟
+ * 從下往上滑入全螢幕，點擊頭像 HUD 開啟；底部顯示用戶碼（留存／訪談用）
  */
 
 import React, { useEffect, useRef } from 'react';
@@ -14,6 +14,7 @@ import {
   Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePlayerStore } from '../../stores/playerStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -28,10 +29,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const userCode = usePlayerStore((s) => s.userCode);
 
   useEffect(() => {
     if (visible) {
       slideAnim.setValue(SCREEN_HEIGHT);
+      usePlayerStore.getState().getOrCreateUserCode();
       Animated.spring(slideAnim, {
         toValue: 0,
         useNativeDriver: true,
@@ -70,7 +73,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           ]}
         >
           <View style={styles.content} />
-          <View style={[styles.closeRow, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={[styles.bottomRow, { paddingBottom: insets.bottom + 16 }]}>
+            <Text style={styles.userCodeText} selectable>
+              用戶碼：{userCode ?? '載入中…'}
+            </Text>
             <TouchableOpacity
               style={styles.closeButton}
               onPress={handleClose}
@@ -101,7 +107,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  closeRow: {
+  bottomRow: {
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -118,5 +124,11 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     color: '#FFF',
     lineHeight: 36,
+  },
+  userCodeText: {
+    marginBottom: 14,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
