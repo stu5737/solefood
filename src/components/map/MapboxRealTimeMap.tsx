@@ -11,17 +11,23 @@
  */
 
 import React, { useEffect, useState, useRef, useMemo, useCallback, useImperativeHandle } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Platform, Animated } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Platform, Animated, Image } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { locationService } from '../../services/location';
 import { gpsHistoryService } from '../../services/gpsHistory';
 import { useSessionStore } from '../../stores/sessionStore';
-import { CAMERA_CONFIG, MAP_THEME, PERFORMANCE_CONFIG, MORNING_THEME, NIGHT_THEME, NO_LABELS_STYLE_JSON } from '../../config/mapbox';
+import { CAMERA_CONFIG, MAP_THEME, PERFORMANCE_CONFIG, MORNING_THEME, NIGHT_THEME, NO_LABELS_STYLE_JSON, FOOD_DROP_ICON, FOOD_DROP_CLUSTER } from '../../config/mapbox';
+import { type RestaurantPoint } from '../../config/restaurants';
+import { useRestaurantStore } from '../../stores/restaurantStore';
 import type { GPSHistoryPoint, CollectionSession } from '../../services/gpsHistory';
 import { latLngToH3, h3ToLatLng } from '../../core/math/h3';
 import { generateH3GeoJson, getH3GeoJsonStats } from '../../utils/h3Renderer';
+import { calculateDistanceMeters } from '../../utils/geo';
+
+const TOOLTIP_CAMERA_ICON = require('../../../assets/images/camera_icon.png');
+const TOOLTIP_UNLOAD_ICON = require('../../../assets/images/unload_icon.png');
 
 // ⚠️ 重要：設置 Mapbox Access Token
 // 請在 src/config/mapbox.ts 中設置你的 token
@@ -39,6 +45,20 @@ interface MapboxRealTimeMapProps {
   selectedSessionId?: string | null;
   showHistoryTrail?: boolean;
   onCountdownComplete?: () => void;
+  /** 使用者點擊地圖上的餐廳標註時回調（遊戲模式下可顯示卸貨畫面） */
+  onRestaurantPress?: (restaurant: RestaurantPoint) => void;
+  /** 一次點到多個餐廳時回調（可顯示「選擇餐廳」讓使用者選一個） */
+  onRestaurantPressMultiple?: (restaurants: RestaurantPoint[]) => void;
+  /** 使用者點擊地圖空白處時回調（可用於關閉卸貨條等） */
+  onMapPress?: () => void;
+  /** 選中的餐廳（用於在圖標正上方浮出卸貨按鈕） */
+  selectedRestaurantForUnload?: RestaurantPoint | null;
+  /** 點擊「看廣告請工人卸貨」時（開啟卸貨變現彈窗） */
+  onUnload?: () => void;
+  /** 點擊「上傳菜單卸貨」時（拍照） */
+  onCamera?: () => void;
+  /** 關閉浮動按鈕 */
+  onCloseRestaurant?: () => void;
 }
 
 export interface MapboxRealTimeMapRef {
@@ -52,9 +72,17 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   selectedSessionId,
   showHistoryTrail = false,
   onCountdownComplete,
+  onRestaurantPress,
+  onRestaurantPressMultiple,
+  onMapPress,
+  selectedRestaurantForUnload = null,
+  onUnload,
+  onCamera,
+  onCloseRestaurant,
 }, ref) => {
   // Store 狀態
   const exploredHexes = useSessionStore((state) => state.exploredHexes);
+  const restaurantPoints = useRestaurantStore((state) => state.restaurantPoints);
   const currentSessionNewHexes = useSessionStore((state) => state.currentSessionNewHexes);
   const mapMode = useSessionStore((state) => state.mapMode);
 
@@ -275,13 +303,67 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
     let headingSubscription: Location.LocationSubscription | null = null;
+    let retryTimeout: NodeJS.Timeout | null = null;
 
-    const startTracking = async () => {
+    const startTracking = async (retryCount = 0) => {
       try {
-        // 獲取初始位置
-        const initialLocation = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        // ✅ 首先請求位置權限
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          console.warn('[MapboxRealTimeMap] ⚠️ 位置權限未授予，狀態:', status);
+          console.warn('[MapboxRealTimeMap] 💡 請在 iOS 模擬器中：Settings → Privacy & Security → Location Services → 啟用應用位置權限');
+          
+          // 重試機制（最多重試 3 次，每次間隔 2 秒）
+          if (retryCount < 3) {
+            console.log(`[MapboxRealTimeMap] 🔄 將在 2 秒後重試 (${retryCount + 1}/3)...`);
+            retryTimeout = setTimeout(() => {
+              startTracking(retryCount + 1);
+            }, 2000);
+          }
+          return;
+        }
+
+        console.log('[MapboxRealTimeMap] ✅ 位置權限已授予');
+
+        // ✅ 檢查位置服務是否可用
+        const isEnabled = await Location.hasServicesEnabledAsync();
+        if (!isEnabled) {
+          console.warn('[MapboxRealTimeMap] ⚠️ 位置服務未啟用');
+          console.warn('[MapboxRealTimeMap] 💡 請在 iOS 模擬器中：Features → Location → 選擇 GPX 文件或自定義位置');
+          
+          if (retryCount < 3) {
+            console.log(`[MapboxRealTimeMap] 🔄 將在 2 秒後重試 (${retryCount + 1}/3)...`);
+            retryTimeout = setTimeout(() => {
+              startTracking(retryCount + 1);
+            }, 2000);
+          }
+          return;
+        }
+
+        // 獲取初始位置（添加超時和重試）
+        let initialLocation: Location.LocationObject | null = null;
+        try {
+          initialLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 5000, // 5 秒超時
+          });
+        } catch (getLocationError: any) {
+          // 如果是模擬器且 GPX 已配置，可能是位置服務還沒準備好，稍後重試
+          if (Platform.OS === 'ios' && retryCount < 3) {
+            console.warn('[MapboxRealTimeMap] ⚠️ 獲取初始位置失敗，可能是模擬器位置服務未準備好:', getLocationError.message);
+            console.log(`[MapboxRealTimeMap] 🔄 將在 3 秒後重試 (${retryCount + 1}/3)...`);
+            retryTimeout = setTimeout(() => {
+              startTracking(retryCount + 1);
+            }, 3000);
+            return;
+          }
+          throw getLocationError;
+        }
+
+        if (!initialLocation) {
+          throw new Error('無法獲取初始位置');
+        }
+
         setCurrentLocation(initialLocation);
         
         // 設置初始運動方向（只有有效值才更新）
@@ -289,17 +371,34 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           setMovementHeading(initialLocation.coords.heading);
         }
         
-        console.log('[MapboxRealTimeMap] 初始位置:', initialLocation.coords);
+        console.log('[MapboxRealTimeMap] ✅ 初始位置已獲取:', {
+          lat: initialLocation.coords.latitude.toFixed(6),
+          lon: initialLocation.coords.longitude.toFixed(6),
+          accuracy: initialLocation.coords.accuracy?.toFixed(1) + 'm',
+        });
 
         // 位置追蹤
+        // ✅ 調整配置以適配 GPX 文件：distanceInterval 設為 0 表示不限制距離，只按時間更新
+        // 這樣可以確保 GPX 文件中的每個點都能被正確接收
         subscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 1000,
-            distanceInterval: 1,
+            timeInterval: 1000, // 每 1 秒檢查一次位置
+            distanceInterval: 0, // ✅ 改為 0：不限制距離，確保 GPX 點之間距離較遠時也能更新
           },
           (location) => {
             setCurrentLocation(location);
+            
+            // ✅ 調試：記錄每次位置更新（用於驗證 GPX 是否正常工作）
+            if (__DEV__) {
+              console.log('[Location Update] 📍 位置更新:', {
+                lat: location.coords.latitude.toFixed(6),
+                lon: location.coords.longitude.toFixed(6),
+                accuracy: location.coords.accuracy?.toFixed(1) + 'm',
+                speed: location.coords.speed?.toFixed(2) + 'm/s',
+                timestamp: new Date(location.timestamp).toLocaleTimeString(),
+              });
+            }
             
             // ✅ 使用 GPS 提供的運動方向（heading）僅在移動時更新
             if (
@@ -337,15 +436,80 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           }
         });
 
-        console.log('[MapboxRealTimeMap] 位置追蹤已啟動');
-      } catch (error) {
-        console.error('[MapboxRealTimeMap] 位置追蹤失敗:', error);
+        console.log('[MapboxRealTimeMap] ✅ 位置追蹤已啟動');
+      } catch (error: any) {
+        console.error('[MapboxRealTimeMap] ❌ 位置追蹤失敗:', error);
+        console.error('[MapboxRealTimeMap] 錯誤詳情:', {
+          message: error?.message,
+          code: error?.code,
+          domain: error?.domain,
+        });
+        
+        // 提供具體的解決建議
+        const errorCode = error?.code;
+        const errorMessage = error?.message || '';
+        const isLocationUnavailable = 
+          errorCode === 'ERR_LOCATION_UNAVAILABLE' || 
+          errorCode === 0 || 
+          error?.domain === 'kCLErrorDomain' ||
+          errorMessage.includes('Cannot obtain current location') ||
+          errorMessage.includes('location unavailable');
+
+        if (isLocationUnavailable) {
+          console.warn('');
+          console.warn('═══════════════════════════════════════════════════════════');
+          console.warn('🚨 位置服務不可用 (ERR_LOCATION_UNAVAILABLE)');
+          console.warn('═══════════════════════════════════════════════════════════');
+          console.warn('');
+          console.warn('📋 解決步驟（按順序執行）：');
+          console.warn('');
+          console.warn('【方法 1：在模擬器中直接設置（最快）】');
+          console.warn('   1. 在 iOS 模擬器菜單欄：');
+          console.warn('      Features → Location → Custom Location...');
+          console.warn('   2. 輸入座標：');
+          console.warn('      Latitude: 23.126480');
+          console.warn('      Longitude: 121.214800');
+          console.warn('   3. 點擊 OK');
+          console.warn('');
+          console.warn('【方法 2：使用 GPX 文件】');
+          console.warn('   1. 在 iOS 模擬器菜單欄：');
+          console.warn('      Features → Location → GPX File...');
+          console.warn('   2. 選擇 "Chishang_10min_Loop.gpx"');
+          console.warn('   3. 如果沒有看到，選擇 "Add GPX File..."');
+          console.warn('   4. 導航到：SolefoodMVP/Chishang_10min_Loop.gpx');
+          console.warn('');
+          console.warn('【方法 3：在 Xcode 中配置（永久）】');
+          console.warn('   1. 打開 Xcode：');
+          console.warn('      open ios/SolefoodMVP.xcworkspace');
+          console.warn('   2. Scheme → Edit Scheme... (⌘<)');
+          console.warn('   3. Run → Options → Core Location');
+          console.warn('   4. Default Location → 選擇 "Chishang 10min Loop"');
+          console.warn('   5. 點擊 Close 保存');
+          console.warn('');
+          console.warn('【驗證】');
+          console.warn('   - 確保模擬器菜單欄顯示：Features → Location → 不是 "None"');
+          console.warn('   - 重新運行應用後，位置應該可以獲取');
+          console.warn('');
+          console.warn('═══════════════════════════════════════════════════════════');
+          console.warn('');
+        }
+        
+        // 重試機制（最多重試 3 次）
+        if (retryCount < 3) {
+          console.log(`[MapboxRealTimeMap] 🔄 將在 3 秒後重試 (${retryCount + 1}/3)...`);
+          retryTimeout = setTimeout(() => {
+            startTracking(retryCount + 1);
+          }, 3000);
+        }
       }
     };
 
     startTracking();
 
     return () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
       if (subscription) {
         subscription.remove();
       }
@@ -354,6 +518,27 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       }
     };
   }, [isCollecting]);
+
+  // ========== 游標跟隨：當 currentLocation 更新時強制 Camera 跟隨（expo-location 驅動） ==========
+  // followUserLocation 跟隨的是 Mapbox 原生定位，模擬器 GPX 由 expo-location 提供，故需手動驅動 Camera
+  const lastCameraCenterRef = useRef<[number, number] | null>(null);
+  useEffect(() => {
+    if (actualMapMode !== 'GAME' || isRecenteringManually || !currentLocation?.coords) return;
+    const lon = currentLocation.coords.longitude;
+    const lat = currentLocation.coords.latitude;
+    const center: [number, number] = [lon, lat];
+    const last = lastCameraCenterRef.current;
+    if (last && last[0] === center[0] && last[1] === center[1]) return;
+    lastCameraCenterRef.current = center;
+    cameraRef.current?.setCamera({
+      centerCoordinate: center,
+      zoomLevel: performanceSettings.zoomLevel,
+      pitch: viewMode === '3D' ? performanceSettings.pitch : 0,
+      heading: 0,
+      animationDuration: CAMERA_CONFIG.animationDuration,
+      animationMode: 'easeTo',
+    });
+  }, [currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, actualMapMode, isRecenteringManually, viewMode, performanceSettings.zoomLevel, performanceSettings.pitch]);
 
   // ========== 歷史會話載入（僅用於歷史軌跡模式） ==========
   // ⚠️ 注意：歷史 H3 渲染已改用 exploredHexes，不再依賴 historySessions
@@ -515,13 +700,52 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
 
   // ========== 數據一致性驗證與修復 ==========
   // ✅ 新版：驗證並自動修復 exploredHexes 的一致性
+  // ✅ 增強：過濾損壞的會話（閃退導致的不完整數據）
   const validateAndRepairDataConsistency = useCallback(() => {
     const allHistorySessions = gpsHistoryService.getAllSessions()
-      .filter(s => s.endTime);
+      .filter(s => s.endTime) // 只要已結束的會話
+      .filter(s => s.points && s.points.length >= 10); // ✅ 至少 10 個點才算有效
     
-    // 從 historySessions 提取所有 H3
+    // ✅ 進一步驗證：檢查點之間的距離，過濾掉損壞的會話
+    const validSessions = allHistorySessions.filter(session => {
+      if (!session.points || session.points.length < 2) return false;
+      
+      // 計算最大跳躍距離
+      let maxJump = 0;
+      for (let i = 1; i < session.points.length; i++) {
+        const prev = session.points[i - 1];
+        const curr = session.points[i];
+        const dist = calculateDistanceMeters(
+          prev.latitude,
+          prev.longitude,
+          curr.latitude,
+          curr.longitude
+        );
+        maxJump = Math.max(maxJump, dist);
+      }
+      
+      // ✅ 如果任意兩個連續點之間距離超過 200m，視為損壞的會話
+      if (maxJump > 200) {
+        console.warn('[驗證] ⚠️ 發現損壞會話（最大跳躍:', maxJump.toFixed(1), 'm）:', {
+          sessionId: session.sessionId,
+          points: session.points.length,
+          startTime: new Date(session.startTime).toLocaleString(),
+        });
+        return false; // 丟棄這個會話
+      }
+      
+      return true;
+    });
+    
+    console.log('[驗證] 會話過濾結果:', {
+      原始會話數: allHistorySessions.length,
+      有效會話數: validSessions.length,
+      已過濾損壞會話: allHistorySessions.length - validSessions.length,
+    });
+    
+    // 從有效會話提取所有 H3
     const sessionH3s = new Set<string>();
-    allHistorySessions.forEach(session => {
+    validSessions.forEach(session => {
       if (session.points) {
         session.points.forEach(point => {
           try {
@@ -540,7 +764,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     console.log('[驗證] 數據一致性檢查:', {
       exploredHexesCount: exploredHexes.size,
       sessionH3sCount: sessionH3s.size,
-      missingInExplored: missingInExplored.length,  // 在 sessions 但不在 exploredHexes
+      missingInExplored: missingInExplored.length,
     });
     
     // ✅ 自動修復：如果 historySessions 有 H3 但 exploredHexes 沒有，自動補上
@@ -566,6 +790,71 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       console.log('[驗證] ✅ 數據一致性正常');
     }
   }, [exploredHexes]);
+
+  // ========== 診斷功能：檢查會話數據完整性 ==========
+  // ✅ 用於開發模式下排查數據損壞問題
+  const diagnoseSessions = useCallback(() => {
+    const allSessions = gpsHistoryService.getAllSessions();
+    
+    console.log('===== 🔍 會話數據診斷 =====');
+    console.log(`總會話數: ${allSessions.length}`);
+    
+    let suspiciousCount = 0;
+    
+    allSessions.forEach((session, index) => {
+      const hasEnd = !!session.endTime;
+      const pointCount = session.points?.length || 0;
+      
+      // 計算平均點間距
+      let avgDistance = 0;
+      let maxJump = 0;
+      if (pointCount > 1) {
+        let totalDist = 0;
+        for (let i = 1; i < session.points.length; i++) {
+          const prev = session.points[i - 1];
+          const curr = session.points[i];
+          const dist = calculateDistanceMeters(
+            prev.latitude,
+            prev.longitude,
+            curr.latitude,
+            curr.longitude
+          );
+          totalDist += dist;
+          maxJump = Math.max(maxJump, dist);
+        }
+        avgDistance = totalDist / (pointCount - 1);
+      }
+      
+      const isSuspicious = !hasEnd || pointCount === 0 || pointCount < 10 || maxJump > 200;
+      
+      if (isSuspicious) {
+        suspiciousCount++;
+      }
+      
+      console.log(`會話 #${index + 1}:`, {
+        id: session.sessionId,
+        開始時間: new Date(session.startTime).toLocaleString(),
+        正常結束: hasEnd,
+        GPS點數: pointCount,
+        平均點間距: `${avgDistance.toFixed(1)}m`,
+        最大跳躍: `${maxJump.toFixed(1)}m`,
+        '🚨 可疑': isSuspicious,
+      });
+    });
+    
+    console.log('===== 診斷總結 =====');
+    console.log(`可疑會話數: ${suspiciousCount} / ${allSessions.length}`);
+    console.log('建議: 如果發現可疑會話，請調用 gpsHistoryService.clearHistory() 清空數據重新開始');
+    console.log('===================');
+  }, []);
+
+  // ⭐ 開發模式：暴露診斷函數到全局（方便調試）
+  useEffect(() => {
+    if (__DEV__) {
+      (global as any).diagnoseSessions = diagnoseSessions;
+      console.log('[MapboxRealTimeMap] 💡 診斷函數已掛載到 global.diagnoseSessions()');
+    }
+  }, [diagnoseSessions]);
 
   // ✅ 在卸貨後調用驗證與修復
   useEffect(() => {
@@ -905,6 +1194,11 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         pitchEnabled={PERFORMANCE_CONFIG.pitchEnabled}
         rotateEnabled={PERFORMANCE_CONFIG.rotateEnabled}
         scaleBarEnabled={false}
+        onPress={(feature) => {
+          const props = feature?.properties as { id?: string } | undefined;
+          const isOurRestaurant = props?.id && restaurantPoints.some((r) => r.id === props.id);
+          if (!isOurRestaurant && onMapPress) onMapPress();
+        }}
       >
         {/* ✅ 關鍵：先註冊模型（必須在所有圖層之前）+ 性能優化 */}
         {is3DModelReady && performanceSettings.enable3DModel && (
@@ -937,6 +1231,14 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               ? [currentLocation.coords.longitude, currentLocation.coords.latitude]
               : undefined
           }
+        />
+
+        {/* ✅ 餐廳圖標：必須在 MapView 層級提前註冊，SymbolLayer 才能顯示圖標（只註冊文字會只顯示文字） */}
+        <Mapbox.Images 
+          nativeAssetImages={['seven_eleven_icon']}
+          onImageMissing={(imageKey) => {
+            console.error('[Mapbox] ❌ 圖標遺失:', imageKey);
+          }}
         />
 
         {/* 歷史 H3 Hexes - 迷霧效果（支援早晚主題切換）+ 性能優化 */}
@@ -1023,6 +1325,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             />
           </Mapbox.ShapeSource>
         )}
+
         {/* 當前會話 H3 Hexes - 活力橙（只顯示邊框，不顯示填充） */}
         {/* ⚠️ 關鍵：採集開始時，即使 currentSessionH3GeoJson 為 null，也要渲染圖層（內容為空），確保圖層註冊順序正確 */}
         {(() => {
@@ -1090,6 +1393,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
 
           return (
             <Mapbox.ShapeSource
+              key={`user-location-source-${coords[0]}-${coords[1]}`}
               id="user-location-source"
               shape={{
                 type: 'Feature',
@@ -1116,7 +1420,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
                 textHaloWidth: timeTheme === 'morning' 
                   ? MORNING_THEME.userMarker.arrow.haloWidth 
                   : MAP_THEME.userMarker.arrow.haloWidth,
-                textOpacity: shouldShow ? 1 : 0,
+                textOpacity: shouldShow ? 0.7 : 0,
                 textPitchAlignment: 'map',
                 textRotationAlignment: 'map',
                 textRotate: displayHeading + (Platform.OS === 'ios' ? -90 : -150 + 180), // iOS箭頭需要-90，Android箭頭需要30（-150再轉180度）
@@ -1133,6 +1437,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 + 性能優化 */}
         {userModelGeoJson && is3DModelReady && isCollecting && performanceSettings.enable3DModel && (
           <Mapbox.ShapeSource 
+            key={`user-3d-model-source-${currentLocation?.coords?.longitude ?? 0}-${currentLocation?.coords?.latitude ?? 0}`}
             id="user-3d-model-source" 
             shape={userModelGeoJson}
             onPress={(e) => {
@@ -1144,10 +1449,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               style={{
                 // ✅ 使用註冊的模型名稱（對應上方 Models 中的 key）
                 modelId: 'user-avatar-model',
-                
                 // ✅ 旋轉（根據運動方向 + 逆時針 90 度）
                 modelRotation: modelRotationValue,
-                
                 // ✅ 縮放（固定大小：4 倍）
                 // ⚠️ 注意：@rnmapbox/maps v10.2.10 不支持動態 modelScale，因此使用固定值
                 modelScale: MODEL_SCALE, // ✅ 固定 4 倍大小
@@ -1170,6 +1473,138 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               }}
             />
           </Mapbox.ShapeSource>
+        )}
+
+        {/* 🍽️ 餐廳標註：聚合 (Clustering) + LOD，資料來自 useRestaurantStore（API 載入） */}
+        {actualMapMode === 'GAME' && restaurantPoints.length > 0 && (() => {
+          const foodDropGeoJson: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: restaurantPoints.map(({ id, coord, title }) => ({
+              type: 'Feature' as const,
+              properties: {
+                id,
+                title, // 只顯示店名（如 7-ELEVEN），不帶地點前綴
+              },
+              geometry: { type: 'Point' as const, coordinates: coord },
+            })),
+          };
+          const handleShapePress = (event: { features: GeoJSON.Feature[] }) => {
+            if (!isCollecting) return;
+            const features = event.features ?? [];
+            const restaurants: RestaurantPoint[] = [];
+            for (const f of features) {
+              const props = f?.properties as { id?: string; point_count?: number } | undefined;
+              if (!props?.point_count && props?.id) {
+                const r = restaurantPoints.find((x) => x.id === props.id);
+                if (r) restaurants.push(r);
+              }
+            }
+            if (restaurants.length === 0) return;
+            if (restaurants.length >= 2 && onRestaurantPressMultiple) {
+              onRestaurantPressMultiple(restaurants);
+            } else if (restaurants.length === 1 && onRestaurantPress) {
+              onRestaurantPress(restaurants[0]);
+            }
+          };
+          // Mapbox step: ['step', input, default, stop1, out1, stop2, out2] → count < 10 藍, 10–50 黃, >50 紅
+          const clusterCircleColor = [
+            'step',
+            ['get', 'point_count'],
+            FOOD_DROP_CLUSTER.circleColorSteps[0][1],
+            FOOD_DROP_CLUSTER.circleColorSteps[1][0],
+            FOOD_DROP_CLUSTER.circleColorSteps[1][1],
+            FOOD_DROP_CLUSTER.circleColorSteps[2][0],
+            FOOD_DROP_CLUSTER.circleColorSteps[2][1],
+          ] as const;
+          return (
+            <>
+              <Mapbox.ShapeSource
+                id="sample-food-drops"
+                shape={foodDropGeoJson}
+                cluster={FOOD_DROP_CLUSTER.cluster}
+                clusterRadius={FOOD_DROP_CLUSTER.clusterRadius}
+                clusterMaxZoomLevel={FOOD_DROP_CLUSTER.clusterMaxZoomLevel}
+                onPress={handleShapePress}
+                hitbox={{ width: 28, height: 28 }}
+              >
+              {/* 1. 聚合圓圈層：Zoom 0–14 顯示，依數量分色 (藍→黃→紅) */}
+              <Mapbox.CircleLayer
+                id="food-drops-cluster-circle"
+                filter={['has', 'point_count']}
+                style={{
+                  circleColor: clusterCircleColor,
+                  circleRadius: FOOD_DROP_CLUSTER.circleRadius,
+                  circleStrokeWidth: FOOD_DROP_CLUSTER.circleStrokeWidth,
+                  circleStrokeColor: FOOD_DROP_CLUSTER.circleStrokeColor,
+                }}
+              />
+              {/* 2. 聚合數字層：圓圈內顯示數量 */}
+              <Mapbox.SymbolLayer
+                id="food-drops-cluster-count"
+                filter={['has', 'point_count']}
+                style={{
+                  textField: ['get', 'point_count_abbreviated'],
+                  textSize: FOOD_DROP_CLUSTER.countTextSize,
+                  textColor: FOOD_DROP_CLUSTER.countTextColor,
+                  textAllowOverlap: true,
+                  textIgnorePlacement: true,
+                  symbolSortKey: FOOD_DROP_CLUSTER.symbolSortKey,
+                }}
+              />
+              {/* 3. 未聚合層：Zoom 15 僅圖標、Zoom 16+ 圖標+店名，圖標與文字垂直對齊（主流地圖邏輯） */}
+              <Mapbox.SymbolLayer
+                id="sample-food-drops-symbol"
+                filter={['!', ['has', 'point_count']]}
+                minZoomLevel={FOOD_DROP_CLUSTER.unclusteredMinZoom}
+                style={{
+                  iconImage: 'seven_eleven_icon',
+                  iconSize: 0.36,
+                  iconAnchor: 'center',
+                  iconAllowOverlap: true,
+                  iconIgnorePlacement: true,
+                  textField: ['step', ['zoom'], '', FOOD_DROP_CLUSTER.poiTextMinZoom, ['get', 'title']],
+                  textSize: FOOD_DROP_ICON.textSize,
+                  textColor: FOOD_DROP_ICON.textColor,
+                  textHaloColor: FOOD_DROP_ICON.textHaloColor,
+                  textHaloWidth: FOOD_DROP_ICON.textHaloWidth,
+                  textAnchor: 'left',
+                  textOffset: [1.55, 0],
+                  textFont: ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+                  textMaxWidth: 10,
+                  textAllowOverlap: true,
+                  textIgnorePlacement: true,
+                  symbolSortKey: FOOD_DROP_ICON.symbolSortKey,
+                }}
+              />
+            </Mapbox.ShapeSource>
+            </>
+          );
+        })()}
+
+        {/* 選中餐廳時：tooltip 浮在圖標上方，錨點在圖標下方一點，與圖標保持間隔不壓住 */}
+        {selectedRestaurantForUnload && isCollecting && actualMapMode === 'GAME' && onUnload && onCamera && onCloseRestaurant && (
+          <Mapbox.MarkerView
+            coordinate={[
+              selectedRestaurantForUnload.coord[0],
+              selectedRestaurantForUnload.coord[1] + 0.00018,
+            ]}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={floatingUnloadStyles.tooltipWrap} pointerEvents="box-none">
+              <View style={floatingUnloadStyles.tooltipCard}>
+                <View style={floatingUnloadStyles.actions}>
+                  <TouchableOpacity style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnCamera]} onPress={onCamera} activeOpacity={0.85}>
+                    <Image source={TOOLTIP_CAMERA_ICON} style={floatingUnloadStyles.btnIcon} resizeMode="contain" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnUnload]} onPress={onUnload} activeOpacity={0.85}>
+                    <Image source={TOOLTIP_UNLOAD_ICON} style={floatingUnloadStyles.btnIconUnload} resizeMode="contain" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={floatingUnloadStyles.tooltipTail} />
+              <View style={floatingUnloadStyles.tooltipGap} />
+            </View>
+          </Mapbox.MarkerView>
         )}
       </Mapbox.MapView>
 
@@ -1239,5 +1674,59 @@ const styles = StyleSheet.create({
     color: MAP_THEME.userMarker.arrow.color, // 橙色數字
     fontFamily: 'monospace',
     textAlign: 'center',
+  },
+});
+
+const floatingUnloadStyles = StyleSheet.create({
+  tooltipWrap: {
+    alignItems: 'center',
+  },
+  tooltipCard: {
+    backgroundColor: 'rgba(50, 55, 70, 0.72)',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    minWidth: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btn: {
+    padding: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnCamera: {},
+  btnUnload: {},
+  btnIcon: {
+    width: 52,
+    height: 52,
+  },
+  btnIconUnload: {
+    width: 68,
+    height: 68,
+  },
+  tooltipTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 8,
+    borderRightWidth: 8,
+    borderTopWidth: 8,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(50, 55, 70, 0.72)',
+    marginTop: -1,
+  },
+  tooltipGap: {
+    height: 12,
+    width: '100%',
   },
 });

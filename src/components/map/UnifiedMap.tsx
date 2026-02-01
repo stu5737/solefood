@@ -30,6 +30,17 @@ interface UnifiedMapProps {
   selectedSessionId?: string | null;
   showHistoryTrail?: boolean;
   onCountdownComplete?: () => void;
+  /** 使用者點擊地圖上的餐廳標註時回調 */
+  onRestaurantPress?: (restaurant: import('../../config/restaurants').RestaurantPoint) => void;
+  /** 一次點到多個餐廳時回調（顯示選擇餐廳） */
+  onRestaurantPressMultiple?: (restaurants: import('../../config/restaurants').RestaurantPoint[]) => void;
+  /** 使用者點擊地圖空白處時回調（可關閉卸貨條） */
+  onMapPress?: () => void;
+  /** 選中的餐廳（在圖標正上方浮出卸貨按鈕，僅 Mapbox） */
+  selectedRestaurantForUnload?: import('../../config/restaurants').RestaurantPoint | null;
+  onUnload?: () => void;
+  onCamera?: () => void;
+  onCloseRestaurant?: () => void;
 }
 
 // 類型定義（用於 ref）

@@ -34,6 +34,9 @@ interface PlayerState {
   // 狀態標誌
   isGhost: boolean;         // Ghost Mode（Stamina = 0）
   isImmobilized: boolean;   // 無法移動（Durability = 0）
+
+  // 錢包（$SOIL 代幣）
+  balance: number;          // 當前餘額（卸貨收益會累加至此）
 }
 
 /**
@@ -87,6 +90,12 @@ interface PlayerActions {
    * @returns 有效最大容量（kg）
    */
   getEffectiveMaxWeight: (isTempExpanded?: boolean) => number;
+
+  /**
+   * 增加餘額（卸貨收益等）
+   * @param amount - 增加數量（$SOIL）
+   */
+  addBalance: (amount: number) => void;
 }
 
 type PlayerStore = PlayerState & PlayerActions;
@@ -103,6 +112,7 @@ const initialState: PlayerState = {
   maxHygiene: HYGIENE.MAX_HYGIENE,
   isGhost: false,
   isImmobilized: false,
+  balance: 0,              // 初始 $SOIL 餘額
 };
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -275,5 +285,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const multiplier = getTieredMultiplier(state.durability);
     
     return calculatedBase * multiplier;
+  },
+
+  addBalance: (amount: number) => {
+    set((state) => ({
+      balance: Math.max(0, state.balance + amount),
+    }));
   },
 }));

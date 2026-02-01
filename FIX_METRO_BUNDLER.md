@@ -1,129 +1,149 @@
-# 修复 "No script URL provided" 错误
+# 修复 Metro Bundler 连接错误
 
 ## 错误信息
 ```
 No script URL provided. Make sure the packager is running or you have embedded a JS bundle in your application bundle.
 ```
 
-## 原因
-这个错误通常发生在：
-1. Metro bundler 没有运行
-2. 应用无法连接到 Metro bundler（网络/IP 问题）
-3. 使用了 `expo run:ios` 但没有启动 Metro bundler
-4. 缓存问题
+## 🔧 解决方案
 
-## 解决方案
-
-### 方案 1：确保 Metro bundler 正在运行（推荐）
+### 方法 1：启动 Metro Bundler（推荐）
 
 **步骤：**
 
-1. **在一个终端启动 Metro bundler：**
+1. **打开新的终端窗口**（保持应用运行）
+
+2. **启动 Metro Bundler**：
    ```bash
+   cd /Users/yumingliao/YML/solefoodmvp
+   npm start
+   # 或者
    npx expo start
    ```
-   
-   你应该看到类似这样的输出：
-   ```
-   Metro waiting on exp://192.168.x.x:8081
+
+3. **等待 Metro Bundler 启动**：
+   - 应该看到类似这样的输出：
+     ```
+     Metro waiting on exp://192.168.x.x:8081
+     ```
+
+4. **在模拟器中重新加载应用**：
+   - 按 `⌘R` 重新加载
+   - 或者摇动设备 → `Reload`
+
+---
+
+### 方法 2：使用 Expo CLI 启动（一体化）
+
+**步骤：**
+
+1. **停止当前运行的应用**（如果正在运行）
+
+2. **使用 Expo CLI 启动**：
+   ```bash
+   cd /Users/yumingliao/YML/solefoodmvp
+   npx expo run:ios
    ```
 
-2. **在另一个终端运行 iOS 应用：**
+   这会自动：
+   - 启动 Metro Bundler
+   - 构建 iOS 应用
+   - 在模拟器中运行
+
+---
+
+### 方法 3：清理并重新启动
+
+如果方法 1 和 2 都不行：
+
+1. **停止所有进程**：
+   ```bash
+   # 停止 Metro Bundler（如果在运行）
+   # 按 Ctrl+C
+   
+   # 停止 iOS 模拟器中的应用
+   ```
+
+2. **清理缓存**：
+   ```bash
+   cd /Users/yumingliao/YML/solefoodmvp
+   npx expo start --clear
+   ```
+
+3. **重新启动**：
    ```bash
    npx expo run:ios
    ```
 
-   或者，如果 Metro bundler 已经在运行，直接在模拟器中按 `r` 重新加载。
+---
 
-### 方案 2：使用 Expo Go（最简单）
+### 方法 4：检查端口占用
 
-如果你使用 Expo Go，只需要：
+如果 8081 端口被占用：
 
-```bash
-npx expo start
-# 然后在设备/模拟器上扫描二维码或按 'i' 打开 iOS 模拟器
-```
-
-### 方案 3：清理并重新启动
-
-如果上述方法无效，尝试完全清理：
-
-```bash
-# 1. 停止所有进程（Ctrl+C）
-
-# 2. 清理缓存
-npx expo start --clear
-
-# 3. 如果使用原生构建，清理 iOS
-cd ios
-rm -rf build
-cd ..
-
-# 4. 重新启动
-npx expo start
-# 然后在另一个终端：npx expo run:ios
-```
-
-### 方案 4：检查网络配置
-
-如果使用物理设备或在不同网络：
-
-1. **确保设备/模拟器与电脑在同一网络**
-2. **检查防火墙设置**
-3. **使用 `--tunnel` 模式（如果网络有问题）：**
+1. **检查端口占用**：
    ```bash
-   npx expo start --tunnel
+   lsof -i :8081
    ```
 
-### 方案 5：使用本地 bundle（离线模式）
+2. **杀死占用进程**：
+   ```bash
+   kill -9 <PID>
+   ```
 
-如果网络问题持续，可以构建离线 bundle：
+3. **重新启动 Metro**：
+   ```bash
+   npx expo start
+   ```
 
+---
+
+## ✅ 验证修复
+
+修复后，应该看到：
+
+1. **Metro Bundler 运行中**：
+   ```
+   Metro waiting on exp://...
+   ```
+
+2. **应用正常加载**：
+   - 不再显示 "No script URL provided" 错误
+   - 应用界面正常显示
+
+3. **控制台输出**：
+   - 应该看到应用日志
+   - 不再有连接错误
+
+---
+
+## 🚀 推荐工作流程
+
+**开发时，建议使用两个终端窗口：**
+
+**终端 1（Metro Bundler）：**
 ```bash
-# 构建生产 bundle
-npx expo export
+cd /Users/yumingliao/YML/solefoodmvp
+npm start
+```
 
-# 然后运行原生应用
+**终端 2（运行应用）：**
+```bash
+cd /Users/yumingliao/YML/solefoodmvp
 npx expo run:ios
 ```
 
-## 常见问题排查
+这样 Metro Bundler 会持续运行，应用可以随时重新加载。
 
-### Q: 我运行了 `expo run:ios`，但 Metro bundler 没有自动启动？
-A: `expo run:ios` 会尝试启动 Metro，但有时会失败。手动启动更可靠：
-```bash
-# 终端 1
-npx expo start
+---
 
-# 终端 2
-npx expo run:ios
-```
+## 📝 常见问题
 
-### Q: 模拟器显示 "Unable to connect to Metro"？
-A: 检查：
-1. Metro bundler 是否在运行
-2. 端口 8081 是否被占用：`lsof -i :8081`
-3. 尝试重启 Metro：`npx expo start --clear`
+### Q: 为什么会出现这个错误？
+A: 应用尝试连接 Metro Bundler 来加载 JavaScript 代码，但找不到运行中的 Metro 服务器。
 
-### Q: 物理设备无法连接？
-A: 
-1. 确保设备和电脑在同一 Wi-Fi 网络
-2. 使用 `npx expo start --tunnel`（需要 Expo 账号）
-3. 或者使用 USB 连接并启用端口转发
+### Q: 每次都要启动 Metro Bundler 吗？
+A: 是的，开发时必须保持 Metro Bundler 运行。生产构建会嵌入 JS bundle，不需要 Metro。
 
-## 推荐工作流
-
-**开发时（推荐）：**
-```bash
-# 终端 1：启动 Metro
-npx expo start
-
-# 终端 2：运行 iOS（如果需要原生功能）
-npx expo run:ios
-```
-
-**快速测试（使用 Expo Go）：**
-```bash
-npx expo start
-# 然后按 'i' 打开 iOS 模拟器，或扫描二维码
-```
+### Q: 可以使用 `expo start` 和 `expo run:ios` 分开运行吗？
+A: 可以！先运行 `expo start`，然后在另一个终端运行 `expo run:ios`。

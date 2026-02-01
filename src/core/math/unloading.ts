@@ -38,17 +38,26 @@ export function canUnload(
   return currentStamina >= requiredStamina;
 }
 
+/** 卸貨來源：隨地 vs 餐廳（影響 porter 倍率） */
+export type UnloadSource = 'anywhere' | 'restaurant';
+
 /**
  * 計算變現倍率
  * @param mode 變現模式
+ * @param unloadSource 卸貨來源（porter 時：restaurant=2x, anywhere=1.5x）
  * @returns 倍率
  */
-export function getPayoutMultiplier(mode: PayoutMode): number {
+export function getPayoutMultiplier(
+  mode: PayoutMode,
+  unloadSource?: UnloadSource
+): number {
   switch (mode) {
     case 'normal':
       return PAYOUT_MATRIX.NORMAL;
     case 'porter':
-      return PAYOUT_MATRIX.PORTER;
+      return unloadSource === 'restaurant'
+        ? PAYOUT_MATRIX.PORTER_AT_RESTAURANT
+        : PAYOUT_MATRIX.PORTER;
     case 'data':
       return PAYOUT_MATRIX.DATA;
     default:
@@ -75,9 +84,10 @@ export function getPayoutMultiplier(mode: PayoutMode): number {
 export function calculateFinalPayout(
   baseValue: number,
   mode: PayoutMode,
-  hygiene: number
+  hygiene: number,
+  unloadSource?: UnloadSource
 ): number {
-  const multiplier = getPayoutMultiplier(mode);
+  const multiplier = getPayoutMultiplier(mode, unloadSource);
   const baseEarnings = baseValue * multiplier;
   
   // 十進位階梯制：根據衛生值計算品質倍率

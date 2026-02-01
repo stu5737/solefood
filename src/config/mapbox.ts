@@ -144,9 +144,9 @@ export const MORNING_THEME = {
   },
   userMarker: {
     arrow: {
-      color: '#FF6B35', // 深橙色箭頭
-      haloColor: 'rgba(255, 255, 255, 0.9)', // 白色光暈
-      haloWidth: 3, // ✅ 縮小 25%（從 4 改為 3）
+      color: 'rgba(255, 255, 255, 0.55)', // 純白半透明填色
+      haloColor: 'rgba(184, 242, 181, 0.75)', // 淡綠 #B8F2B5 光暈，蓋到餐廳圖標也看得清
+      haloWidth: 3,
     },
   },
 };
@@ -221,14 +221,13 @@ export const MAP_THEME = {
     opacity: 1,
   },
   
-  // === 用戶游標 - 導航箭頭 ===
+  // === 用戶游標 - 純白半透明填色 + 淡綠光暈（蓋到餐廳圖標也看得清） ===
   userMarker: {
     arrow: {
       symbol: '➤',
-      // 純白色箭頭（與軌跡、新 H3 同色系，完全融合設計）
-      color: '#FFFFFF', // 純白色
-      haloColor: 'rgba(255, 255, 255, 0.8)', // ✅ 半透明白色光暈（避免暴露被遮蓋）
-      haloWidth: 3, // ✅ 縮小 25%（從 4 改為 3）
+      color: 'rgba(255, 255, 255, 0.52)', // 純白半透明
+      haloColor: 'rgba(184, 242, 181, 0.78)', // 淡綠 #B8F2B5 外框光暈
+      haloWidth: 3,
       size: {
         mode3D: 40,
         mode2D: 36,
@@ -277,6 +276,54 @@ export const CYBERPUNK_COLORS = {
   },
   gpsTrail: MAP_THEME.gpsTrail.color,
   userMarker: MAP_THEME.userMarker.arrow.color,
+};
+
+/**
+ * 🍽️ 美食卸貨圖標：直接使用 Mapbox 深色地圖文字風格
+ *
+ * - 淺灰/米白字、細 halo，簡潔無容器
+ * - 與 Mapbox dark-v11 內建 POI 標籤風格一致
+ */
+export const FOOD_DROP_ICON = {
+  textColor: '#c4c4c4',
+  textColorCompleted: '#6b7280',
+  textHaloColor: 'rgba(0,0,0,0.6)',
+  textHaloWidth: 1.5,
+  textAnchor: 'bottom' as const,
+  textOffset: [0, -0.8] as [number, number],
+  textSize: 12,
+  symbolSortKey: 100000,
+};
+
+/**
+ * 🍽️ 美食卸貨聚合 (Clustering) 與 LOD（對齊主流地圖）
+ *
+ * - Zoom 0–13：僅顯示聚合圓（密度）
+ * - Zoom 14：聚合圓 + 數字
+ * - Zoom 15：拆開聚合，僅顯示圖標（不顯示文字，減少雜訊）
+ * - Zoom 16+：圖標 + 店名文字
+ */
+export const FOOD_DROP_CLUSTER = {
+  cluster: true,
+  clusterRadius: 50,
+  clusterMaxZoomLevel: 14,
+  /** 聚合圓：依數量分色（藍→黃→紅熱點） */
+  circleColorSteps: [
+    [0, 'rgba(59, 130, 246, 0.9)'],
+    [10, 'rgba(234, 179, 8, 0.9)'],
+    [50, 'rgba(239, 68, 68, 0.9)'],
+  ] as [number, string][],
+  circleRadius: 18,
+  circleStrokeWidth: 2,
+  circleStrokeColor: 'rgba(255,255,255,0.6)',
+  /** 聚合數字層 */
+  countTextColor: '#1a1a2e',
+  countTextSize: 12,
+  /** 未聚合：Zoom 15+ 顯示圖標；Zoom 16+ 才顯示店名（主流地圖做法） */
+  unclusteredMinZoom: 15,
+  /** Zoom 達此值以上才顯示店名（圖標與文字垂直對齊） */
+  poiTextMinZoom: 16,
+  symbolSortKey: 100000,
 };
 
 /**

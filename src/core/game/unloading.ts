@@ -11,6 +11,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useInventoryStore } from '../../stores/inventoryStore';
 import { calculateFinalPayout } from '../math/unloading';
+import type { UnloadSource } from '../math/unloading';
 import { ITEM_VALUES } from '../../utils/constants';
 import type { PayoutMode } from '../../types/game';
 
@@ -30,9 +31,13 @@ export interface UnloadSettlementResult {
  * 用於調試和預覽
  * 
  * @param mode - 變現模式（normal, porter, data）
+ * @param unloadSource - 卸貨來源（porter 時：restaurant=2x, anywhere=1.5x）
  * @returns 結算結果（只計算，不應用）
  */
-export function calculateSettlement(mode: PayoutMode = 'normal'): UnloadSettlementResult {
+export function calculateSettlement(
+  mode: PayoutMode = 'normal',
+  unloadSource?: UnloadSource
+): UnloadSettlementResult {
   const playerStore = usePlayerStore.getState();
   const sessionStore = useSessionStore.getState();
   const inventoryStore = useInventoryStore.getState();
@@ -61,7 +66,7 @@ export function calculateSettlement(mode: PayoutMode = 'normal'): UnloadSettleme
 
   // 5. 計算最終收益（應用變現倍率和階層閾值機制）
   // 階層閾值：衛生值 >= 90% 使用 100% 價值，< 90% 使用 90% 價值
-  const revenue = calculateFinalPayout(baseValue, mode, currentHygiene);
+  const revenue = calculateFinalPayout(baseValue, mode, currentHygiene, unloadSource);
 
   // 6. 返回結算結果（不應用狀態變更）
   return {
@@ -83,9 +88,13 @@ export function calculateSettlement(mode: PayoutMode = 'normal'): UnloadSettleme
  * 4. 應用狀態變更（衰減、清空庫存、重置會話）
  * 
  * @param mode - 變現模式（normal, porter, data）
+ * @param unloadSource - 卸貨來源（porter 時：restaurant=2x, anywhere=1.5x）
  * @returns 結算結果
  */
-export function executeUnloadSettlement(mode: PayoutMode = 'normal'): UnloadSettlementResult {
+export function executeUnloadSettlement(
+  mode: PayoutMode = 'normal',
+  unloadSource?: UnloadSource
+): UnloadSettlementResult {
   const playerStore = usePlayerStore.getState();
   const sessionStore = useSessionStore.getState();
   const inventoryStore = useInventoryStore.getState();
@@ -116,7 +125,7 @@ export function executeUnloadSettlement(mode: PayoutMode = 'normal'): UnloadSett
   // 5. 計算最終收益（應用變現倍率和階層閾值機制）
   // 階層閾值：衛生值 >= 90% 使用 100% 價值，< 90% 使用 90% 價值
   // 注意：使用當前衛生值計算收益（衛生值已改為即時扣除）
-  const revenue = calculateFinalPayout(baseValue, mode, currentHygiene);
+  const revenue = calculateFinalPayout(baseValue, mode, currentHygiene, unloadSource);
 
   // 6. 應用狀態變更
   // 6.1 衰減耐久度（會自動觸發 checkZeroTolerance）

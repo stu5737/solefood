@@ -15,6 +15,7 @@ import {
   Text,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { UnifiedMap, type UnifiedMapRef } from '../../src/components/map';
 import { MAP_ENGINE } from '../../src/config/features';
@@ -24,7 +25,13 @@ import {
   useFloatingText,
   RescueModal,
   DevDashboard,
+  UnloadModal,
+  NearRestaurantBar,
 } from '../../src/components/game';
+import { NEAR_RESTAURANT_RADIUS_M, RESTAURANT_DATA_SOURCE, type RestaurantPoint } from '../../src/config/restaurants';
+import { calculateDistanceMeters } from '../../src/utils/geo';
+import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GameOverlay, TopHUD, WalletBalanceOverlay, IdleTopHUD } from '../../src/components/game-hud';
 import type { GameState } from '../../src/components/game';
 import type { RescueType } from '../../src/components/game';
@@ -39,10 +46,14 @@ import type { MagnetSystemCallbacks } from '../../src/systems/MagnetSystem';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import { usePlayerStore } from '../../src/stores/playerStore';
 import { useInventoryStore } from '../../src/stores/inventoryStore';
+import { useRestaurantStore } from '../../src/stores/restaurantStore';
 import type { CollectionSession } from '../../src/services/gpsHistory';
 import type { Item } from '../../src/types/item';
 
+const SEVEN_ELEVEN_ICON = require('../../assets/images/seven_eleven_icon.png');
+
 export default function GameScreenV9Plus() {
+  const insets = useSafeAreaInsets();
   // 從 Store 獲取狀態
   const updateExploredHexesFromHistory = useSessionStore(
     (state) => state.updateExploredHexesFromHistory
@@ -50,6 +61,7 @@ export default function GameScreenV9Plus() {
   const stamina = usePlayerStore((state) => state.stamina);
   const durability = usePlayerStore((state) => state.durability);
   const effectiveMaxWeight = usePlayerStore((state) => state.getEffectiveMaxWeight());
+  const balance = usePlayerStore((state) => state.balance);
   const totalWeight = useInventoryStore((state) => state.totalWeight);
   const items = useInventoryStore((state) => state.items);
 
@@ -67,6 +79,13 @@ export default function GameScreenV9Plus() {
   // 救援彈窗狀態
   const [rescueModalVisible, setRescueModalVisible] = useState(false);
   const [rescueType, setRescueType] = useState<RescueType>('Adrenaline');
+  // 靠近餐廳卸貨：使用者位置、使用者點選的餐廳、卸貨變現彈窗
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [selectedRestaurantForUnload, setSelectedRestaurantForUnload] = useState<RestaurantPoint | null>(null);
+  const [restaurantPickerList, setRestaurantPickerList] = useState<RestaurantPoint[] | null>(null);
+  const [unloadModalVisible, setUnloadModalVisible] = useState(false);
+  /** 隨地卸貨（主按鈕）→ 兩按鈕；餐廳圖標卸貨（需到點）→ 三按鈕 */
+  const [unloadModalSource, setUnloadModalSource] = useState<'anywhere' | 'restaurant'>('anywhere');
   const [rescueTitle, setRescueTitle] = useState('');
   const [rescueDesc, setRescueDesc] = useState('');
   const [rescueReward, setRescueReward] = useState('');
@@ -118,10 +137,11 @@ export default function GameScreenV9Plus() {
           await locationService.requestPermissions();
         }
 
-        // 獲取初始位置
+        // 獲取初始位置（供靠近餐廳偵測使用）
         try {
           const location = await locationService.getCurrentLocation();
           if (location) {
+            setUserLocation({ latitude: location.latitude, longitude: location.longitude });
             console.log('[GameScreen] 初始位置:', location);
           }
         } catch (error) {
@@ -131,6 +151,54 @@ export default function GameScreenV9Plus() {
         // 載入歷史會話
         const sessions = gpsHistoryService.getAllSessions();
         setAllSessions(sessions);
+
+        // 載入便利商店點位（merged 直接吃單一 JSON，其餘吃對應來源）
+        try {
+          let data: RestaurantPoint[] = [];
+          let source = '';
+
+          if (RESTAURANT_DATA_SOURCE === 'merged') {
+            const merged = require('../../assets/data/merged_convenience_stores.json') as RestaurantPoint[];
+            if (Array.isArray(merged) && merged.length > 0) {
+              data = merged;
+              source = '合併門市';
+            }
+          } else if (RESTAURANT_DATA_SOURCE === 'ecpay') {
+            const ecpay = require('../../assets/data/ecpay_convenience_stores.json') as RestaurantPoint[];
+            if (Array.isArray(ecpay) && ecpay.length > 0) {
+              data = ecpay;
+              source = '綠界門市';
+            }
+          } else if (RESTAURANT_DATA_SOURCE === 'overpass') {
+            const overpass = require('../../assets/data/taiwan_711_restaurants.json') as RestaurantPoint[];
+            if (Array.isArray(overpass) && overpass.length > 0) {
+              data = overpass;
+              source = 'Overpass 7-Eleven';
+            }
+          } else if (RESTAURANT_DATA_SOURCE === 'auto') {
+            try {
+              const ecpay = require('../../assets/data/ecpay_convenience_stores.json') as RestaurantPoint[];
+              if (Array.isArray(ecpay) && ecpay.length > 0) {
+                data = ecpay;
+                source = '綠界門市';
+              }
+            } catch (_) {}
+            if (data.length === 0) {
+              const overpass = require('../../assets/data/taiwan_711_restaurants.json') as RestaurantPoint[];
+              if (Array.isArray(overpass) && overpass.length > 0) {
+                data = overpass;
+                source = 'Overpass 7-Eleven';
+              }
+            }
+          }
+
+          if (data.length > 0) {
+            useRestaurantStore.getState().setRestaurantPoints(data);
+            console.log('[GameScreen] 已載入便利商店（' + source + '）:', data.length, '筆');
+          }
+        } catch (e) {
+          console.warn('[GameScreen] 便利商店資料未載入（merged 請先執行 scripts/merge_store_sources.py）:', e);
+        }
 
         // 初始化磁吸系統
         const magnetCallbacks: MagnetSystemCallbacks = {
@@ -178,10 +246,11 @@ export default function GameScreenV9Plus() {
   useEffect(() => {
     // 訂閱位置更新來獲取速度和距離
     const subscription = locationService.subscribeToLocationUpdates((location, distance) => {
+      setUserLocation({ latitude: location.latitude, longitude: location.longitude });
       // 更新速度（m/s 轉換為 km/h）
       if (location.speed !== undefined && location.speed > 0) {
         setCurrentSpeed(location.speed * 3.6);
-        } else {
+      } else {
         setCurrentSpeed(0);
       }
     });
@@ -284,31 +353,27 @@ export default function GameScreenV9Plus() {
   };
 
   /**
-   * 卸貨
+   * 卸貨（直接結束會話，不開變現彈窗；用於 DevDashboard 等）
    */
   const handleUnload = async () => {
     console.log('[GameScreen] 🚗 卸貨...');
-
     setGameState('UNLOADING');
+    await finishUnloadSession();
+  };
 
-    // 停止磁吸系統
+  /**
+   * 卸貨會話收尾：停止追蹤、結束會話、更新歷史、飄字、回到 IDLE
+   * 用於「靠近餐廳 → UnloadModal 確認後」或 handleUnload
+   */
+  const finishUnloadSession = async () => {
     magnetSystem.stop();
-
-    // 停止背景服務
     bgTrackingNotification.stopTracking();
     await backgroundLocationService.stopBackgroundTracking();
-
-    // 結束會話
     await gpsHistoryService.endSession('unload');
-
-    // 更新歷史會話
     const sessions = gpsHistoryService.getAllSessions();
     setAllSessions(sessions);
-
-    // 顯示卸貨結算彈窗（這裡可以擴展）
     showFloatingText('💰 卸貨完成！', '#2196F3');
-
-    // 重置狀態
+    setSelectedRestaurantForUnload(null);
     setGameState('IDLE');
   };
 
@@ -460,9 +525,30 @@ export default function GameScreenV9Plus() {
   };
 
   const handleRecenterMap = () => {
-    // 這裡應該觸發地圖重新定位
     console.log('[GameScreen] 📍 重新定位');
     showFloatingText('📍 重新定位', '#2196F3');
+  };
+
+  /** 靠近餐廳時：開啟相機（卸貨證明／打卡）；模擬器不支援時改為友善提示 */
+  const handleNearRestaurantCamera = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('需要相機權限', '請在設定中允許使用相機以進行卸貨拍照。');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets[0]) {
+        showFloatingText('📷 已拍攝', '#4CAF50');
+      }
+    } catch (e) {
+      console.warn('[GameScreen] Camera error:', e);
+      showFloatingText('模擬器不支援相機，請在實機上使用', '#FF9800');
+    }
   };
 
   const handleQuickConsume = () => {
@@ -490,6 +576,44 @@ export default function GameScreenV9Plus() {
             selectedSessionId={selectedSessionId}
             showHistoryTrail={showHistoryTrail}
             onCountdownComplete={() => setCountdownComplete(true)}
+            onRestaurantPress={(restaurant) => {
+              setSelectedRestaurantForUnload((prev) =>
+                prev?.id === restaurant.id ? null : restaurant
+              );
+            }}
+            onRestaurantPressMultiple={(restaurants) => setRestaurantPickerList(restaurants)}
+            onMapPress={() => {
+              setSelectedRestaurantForUnload(null);
+              setRestaurantPickerList(null);
+            }}
+            selectedRestaurantForUnload={MAP_ENGINE === 'mapbox' ? selectedRestaurantForUnload : null}
+            onUnload={
+              MAP_ENGINE === 'mapbox'
+                ? () => {
+                    if (items.length === 0) {
+                      showFloatingText('背包是空的，無法卸貨', '#FF9800');
+                      return;
+                    }
+                    const dist =
+                      userLocation &&
+                      selectedRestaurantForUnload &&
+                      calculateDistanceMeters(
+                        userLocation.latitude,
+                        userLocation.longitude,
+                        selectedRestaurantForUnload.coord[1],
+                        selectedRestaurantForUnload.coord[0]
+                      );
+                    if (dist != null && dist > NEAR_RESTAURANT_RADIUS_M) {
+                      showFloatingText('請靠近餐廳後再卸貨', '#FF9800');
+                      return;
+                    }
+                    setUnloadModalSource('restaurant');
+                    setUnloadModalVisible(true);
+                  }
+                : undefined
+            }
+            onCamera={MAP_ENGINE === 'mapbox' ? handleNearRestaurantCamera : undefined}
+            onCloseRestaurant={MAP_ENGINE === 'mapbox' ? () => setSelectedRestaurantForUnload(null) : undefined}
           />
         </View>
       )}
@@ -499,7 +623,7 @@ export default function GameScreenV9Plus() {
         <IdleTopHUD
           stamina={stamina}
           maxStamina={usePlayerStore.getState().maxStamina}
-          balance={1250.0} // TODO: 從 Store 讀取實際餘額
+          balance={balance}
         />
       )}
 
@@ -529,10 +653,76 @@ export default function GameScreenV9Plus() {
             if (gameState === 'IDLE') {
               handleStartShift();
             } else if (gameState === 'COLLECTING') {
-              // 可以添加捕捉/拍照邏輯
               console.log('[GameScreen] CAPTURE pressed');
             }
           }}
+        />
+      )}
+
+      {/* ========== 採集模式常駐：隨時隨地呼叫卡車卸貨按鈕（位置與大小同 IDLE GO forage 按鈕） ========== */}
+      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && countdownComplete && (
+        <View style={[styles.callTruckButtonContainer, { bottom: insets.bottom + 18 }]} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.callTruckButton}
+            onPress={() => {
+              if (items.length === 0) {
+                showFloatingText('背包是空的，無法卸貨', '#FF9800');
+                return;
+              }
+              setUnloadModalSource('anywhere');
+              setUnloadModalVisible(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <Image
+              source={require('../../assets/images/calltruck_icon.png')}
+              style={styles.callTruckIcon}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ========== 點選餐廳後顯示卸貨／拍照條（僅 react-native-maps；Mapbox 改為圖標正上方浮動按鈕） ========== */}
+      {isReady && !showHistoryTrail && gameState === 'COLLECTING' && selectedRestaurantForUnload && MAP_ENGINE !== 'mapbox' && (
+        <NearRestaurantBar
+          restaurant={{
+            id: selectedRestaurantForUnload.id,
+            title: selectedRestaurantForUnload.title,
+            emoji: selectedRestaurantForUnload.emoji,
+            distanceMeters: userLocation
+              ? Math.round(
+                  calculateDistanceMeters(
+                    userLocation.latitude,
+                    userLocation.longitude,
+                    selectedRestaurantForUnload.coord[1],
+                    selectedRestaurantForUnload.coord[0]
+                  )
+                )
+              : undefined,
+          }}
+          onUnload={() => {
+            if (items.length === 0) {
+              showFloatingText('背包是空的，無法卸貨', '#FF9800');
+              return;
+            }
+            const dist =
+              userLocation &&
+              calculateDistanceMeters(
+                userLocation.latitude,
+                userLocation.longitude,
+                selectedRestaurantForUnload.coord[1],
+                selectedRestaurantForUnload.coord[0]
+              );
+            if (dist != null && dist > NEAR_RESTAURANT_RADIUS_M) {
+              showFloatingText('請靠近餐廳後再卸貨', '#FF9800');
+              return;
+            }
+            setUnloadModalSource('restaurant');
+            setUnloadModalVisible(true);
+          }}
+          onCamera={handleNearRestaurantCamera}
+          onClose={() => setSelectedRestaurantForUnload(null)}
         />
       )}
 
@@ -540,13 +730,13 @@ export default function GameScreenV9Plus() {
       {isReady && !showHistoryTrail && !showDevDashboard && (
         <View style={styles.settingsButtonContainer} pointerEvents="box-none">
           {MAP_ENGINE === 'mapbox' && (
-            <TouchableOpacity
+          <TouchableOpacity
               style={[styles.settingsButton, styles.viewModeRecenterButton]}
               onPress={() => mapRef.current?.toggle3D2DAndRecenter?.()}
-              activeOpacity={0.8}
-            >
+            activeOpacity={0.8}
+          >
               <Ionicons name="layers-outline" size={22} color="rgba(255,255,255,0.9)" />
-            </TouchableOpacity>
+          </TouchableOpacity>
           )}
           <TouchableOpacity
             style={styles.settingsButton}
@@ -590,6 +780,65 @@ export default function GameScreenV9Plus() {
         onAdSuccess={handleAdSuccess}
         onCancel={handleAdCancel}
       />
+
+      {/* ========== 卸貨變現彈窗（靠近餐廳時按卸貨開啟） ========== */}
+      <UnloadModal
+        visible={unloadModalVisible}
+        unloadSource={unloadModalSource}
+        isGoldenMistNode={true}
+        onClose={() => setUnloadModalVisible(false)}
+        onSuccess={(revenue) => {
+          usePlayerStore.getState().addBalance(revenue);
+          setUnloadModalVisible(false);
+          setSelectedRestaurantForUnload(null);
+          finishUnloadSession();
+        }}
+        onPicnic={() => {
+          setUnloadModalVisible(false);
+          setSelectedRestaurantForUnload(null);
+          handlePicnic();
+        }}
+      />
+
+      {/* ========== 多餐廳選擇彈窗（圖標重疊時點到多個，讓使用者選一個） ========== */}
+      <Modal
+        visible={restaurantPickerList != null && restaurantPickerList.length > 0}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRestaurantPickerList(null)}
+      >
+        <TouchableOpacity
+          style={styles.restaurantPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setRestaurantPickerList(null)}
+        >
+          <View style={styles.restaurantPickerCard} pointerEvents="auto">
+            <Text style={styles.restaurantPickerTitle}>選擇要卸貨的餐廳</Text>
+            {(restaurantPickerList ?? []).map((r) => (
+              <TouchableOpacity
+                key={r.id}
+                style={styles.restaurantPickerItem}
+                onPress={() => {
+                  setSelectedRestaurantForUnload(r);
+                  setRestaurantPickerList(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Image source={SEVEN_ELEVEN_ICON} style={styles.restaurantPickerIcon} resizeMode="contain" />
+                <Text style={styles.restaurantPickerItemText}>
+                  {r.emoji ? `${r.emoji} ${r.title}` : r.title}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={styles.restaurantPickerCancel}
+              onPress={() => setRestaurantPickerList(null)}
+            >
+              <Text style={styles.restaurantPickerCancelText}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* ========== 歷史軌跡彈窗 ========== */}
       <Modal
@@ -705,6 +954,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
   },
   // ========== UI 容器 ==========
+  callTruckButtonContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 2001,
+    pointerEvents: 'box-none',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callTruckButton: {
+    width: 382,
+    height: 109,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  callTruckIcon: {
+    width: 382,
+    height: 109,
+  },
   settingsButtonContainer: {
     position: 'absolute',
     bottom: 20,
@@ -803,5 +1072,58 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  // ========== 多餐廳選擇彈窗（防誤觸） ==========
+  restaurantPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  restaurantPickerCard: {
+    backgroundColor: 'rgba(30, 35, 50, 0.98)',
+    borderRadius: 16,
+    padding: 20,
+    minWidth: 260,
+    maxWidth: 320,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  restaurantPickerTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  restaurantPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  restaurantPickerIcon: {
+    width: 40,
+    height: 40,
+    marginRight: 12,
+  },
+  restaurantPickerItemText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  restaurantPickerCancel: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  restaurantPickerCancelText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 15,
   },
 });

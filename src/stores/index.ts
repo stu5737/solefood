@@ -8,6 +8,7 @@
 export { usePlayerStore } from './playerStore';
 export { useInventoryStore } from './inventoryStore';
 export { useSessionStore } from './sessionStore';
+export { useRestaurantStore } from './restaurantStore';
 
 /**
  * 跨 Store 通信模式說明：

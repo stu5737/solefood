@@ -1064,67 +1064,99 @@ export const useSessionStore = create<SessionStore>()(
       currentHexes: [] as string[]
     };
     
-    // ⚡️ 核心邏輯：路徑補間 (Grid Path Interpolation)
+    // ⚡️ 核心邏輯：路徑補間 (Grid Path Interpolation) + 方案 B：限制距離
     if (lastKnownHex) {
       try {
         // 動態導入 h3-js 的 gridPathCells 方法
         const { getH3ModuleSync } = require('../core/math/h3');
         const h3 = getH3ModuleSync();
         
+        // ⭐⭐⭐ 方案 B：限制插值距離（與 updateExploredHexesFromHistory 一致）
+        const MAX_INTERPOLATION_CELLS = 20; // 約 100-200 米
+        
         // 檢查是否支持 gridPathCells
         if (h3 && typeof h3.gridPathCells === 'function') {
           // 取得從上一格到當前格之間的所有格子
           const pathCells = h3.gridPathCells(lastKnownHex, hexIndex);
           
-          // 將路徑上所有格子加入
-          pathCells.forEach((cell: string) => {
-            const isHistorical = exploredHexes.has(cell);
-            const isCurrentSession = currentSessionNewHexes.has(cell);
+          // ⭐⭐⭐ 關鍵修復：只有距離合理時才插值，避免 GPS 跳動造成亂連線
+          if (pathCells.length <= MAX_INTERPOLATION_CELLS) {
+            // 距離合理，進行插值
+            pathCells.forEach((cell: string) => {
+              const isHistorical = exploredHexes.has(cell);
+              const isCurrentSession = currentSessionNewHexes.has(cell);
+              
+              if (!isHistorical && !isCurrentSession) {
+                // ✅ 新探索的 H3（Gray Zone）
+                newCurrentSessionHexes.add(cell);
+                hasNewDiscoveries = true;
+                explorationDetails.newHexes.push(cell);
+                
+                console.log('🆕 [開拓者] 發現未探索區域！', {
+                  h3Index: cell.substring(0, 10) + '...',
+                  類型: '🌫️ Gray Zone',
+                  獎勵: '✨ T2 掉落率 +10%',
+                  action: '顯示綠色方框'
+                });
+              } else if (isHistorical) {
+                // ⏪ 走到歷史 H3
+                explorationDetails.historicalHexes.push(cell);
+                
+                console.log('🔄 [重訪] 已探索區域', {
+                  h3Index: cell.substring(0, 10) + '...',
+                  類型: '📍 Explored',
+                  獎勵: '無加成',
+                  action: '不顯示方框'
+                });
+              } else {
+                // 🔁 當前會話已經走過
+                explorationDetails.currentHexes.push(cell);
+                
+                console.log('🔁 [當前] 會話內移動', {
+                  h3Index: cell.substring(0, 10) + '...',
+                  類型: '🔁 Current',
+                  獎勵: '無加成',
+                  action: '不重複顯示'
+                });
+              }
+            });
+            
+            console.log('[SessionStore] 🎯 開拓者判定總結:', {
+              from: lastKnownHex.substring(0, 10) + '...',
+              to: hexIndex.substring(0, 10) + '...',
+              pathLength: pathCells.length,
+              新探索: explorationDetails.newHexes.length,
+              歷史區域: explorationDetails.historicalHexes.length,
+              當前會話: explorationDetails.currentHexes.length,
+              開拓者紅利: hasNewDiscoveries ? '✅ 啟動' : '❌ 未啟動'
+            });
+          } else {
+            // ⭐⭐⭐ 距離太遠，跳過插值（GPS 跳動或漂移）
+            console.warn(`[SessionStore] ⚠️ Skipped interpolation in discoverNewHex: ${pathCells.length} cells (too far, possible GPS jump)`, {
+              from: lastKnownHex.substring(0, 10) + '...',
+              to: hexIndex.substring(0, 10) + '...',
+              maxAllowed: MAX_INTERPOLATION_CELLS,
+            });
+            
+            // 只加入當前格子，不做插值
+            const isHistorical = exploredHexes.has(hexIndex);
+            const isCurrentSession = currentSessionNewHexes.has(hexIndex);
             
             if (!isHistorical && !isCurrentSession) {
-              // ✅ 新探索的 H3（Gray Zone）
-              newCurrentSessionHexes.add(cell);
+              newCurrentSessionHexes.add(hexIndex);
               hasNewDiscoveries = true;
-              explorationDetails.newHexes.push(cell);
+              explorationDetails.newHexes.push(hexIndex);
               
-              console.log('🆕 [開拓者] 發現未探索區域！', {
-                h3Index: cell.substring(0, 10) + '...',
-                類型: '🌫️ Gray Zone',
-                獎勵: '✨ T2 掉落率 +10%',
-                action: '顯示綠色方框'
+              console.log('🆕 [開拓者] 發現未探索區域！(跳過插值)', {
+                h3Index: hexIndex.substring(0, 10) + '...',
+                原因: 'GPS 跳動，距離過遠'
               });
             } else if (isHistorical) {
-              // ⏪ 走到歷史 H3
-              explorationDetails.historicalHexes.push(cell);
-              
-              console.log('🔄 [重訪] 已探索區域', {
-                h3Index: cell.substring(0, 10) + '...',
-                類型: '📍 Explored',
-                獎勵: '無加成',
-                action: '不顯示方框'
-              });
+              explorationDetails.historicalHexes.push(hexIndex);
             } else {
-              // 🔁 當前會話已經走過
-              explorationDetails.currentHexes.push(cell);
-              
-              console.log('🔁 [當前] 會話內移動', {
-                h3Index: cell.substring(0, 10) + '...',
-                類型: '🔁 Current',
-                獎勵: '無加成',
-                action: '不重複顯示'
-              });
+              explorationDetails.currentHexes.push(hexIndex);
             }
-          });
-          
-          console.log('[SessionStore] 🎯 開拓者判定總結:', {
-            from: lastKnownHex.substring(0, 10) + '...',
-            to: hexIndex.substring(0, 10) + '...',
-            pathLength: pathCells.length,
-            新探索: explorationDetails.newHexes.length,
-            歷史區域: explorationDetails.historicalHexes.length,
-            當前會話: explorationDetails.currentHexes.length,
-            開拓者紅利: hasNewDiscoveries ? '✅ 啟動' : '❌ 未啟動'
-          });
+          }
         } else {
           // 降級方案：直接加入當前格子
           console.log('[SessionStore] gridPathCells not available, using fallback');
@@ -1255,7 +1287,9 @@ export const useSessionStore = create<SessionStore>()(
   /**
    * 從7天歷史軌跡更新已探索的H3六邊形
    * 
-   * ⭐ 修復：確保初始化並從多個來源獲取數據，添加錯誤處理
+   * ⭐⭐⭐ 方案 B+C 修復：
+   * - 方案 B：限制插值距離（最多 20 個格子，避免 GPS 漂移造成的遠距離填補）
+   * - 方案 C：按 session 分組處理（避免跨 session 插值，防止不連續的會話被連接）
    * 
    * 從GPS歷史服務中獲取過去7天的所有軌跡點
    * 將這些點轉換為H3索引並存入exploredHexes
@@ -1271,11 +1305,7 @@ export const useSessionStore = create<SessionStore>()(
         await gpsHistoryService.initialize();
       }
       
-      // ⭐ 注意：persist middleware 已經自動從存儲讀取了 exploredHexes
-      // 所以 state.exploredHexes 已經包含了持久化的數據
       const state = get();
-      
-      // ⭐ 直接使用 state.exploredHexes（persist 已經處理了 Set 轉換）
       const existingHexes = new Set<string>(state.exploredHexes);
       
       console.log('[SessionStore] 📊 Loaded from persist storage:', {
@@ -1286,9 +1316,7 @@ export const useSessionStore = create<SessionStore>()(
       // 首先檢查並遷移舊的 Res 10 數據到 Res 11
       const oldHexes = Array.from(existingHexes);
       if (oldHexes.length > 0) {
-        // 檢查是否有 Res 10 的格子需要遷移
         const res10Hexes = oldHexes.filter((hex) => {
-          // 從 fallback ID 解析分辨率
           if (hex.startsWith('fallback_')) {
             const parts = hex.split('_');
             if (parts.length === 4) {
@@ -1304,13 +1332,11 @@ export const useSessionStore = create<SessionStore>()(
           console.log(`[SessionStore] Migrating ${res10Hexes.length} Res 10 hexes to Res 11...`);
           const migratedHexes = new Set<string>(existingHexes);
           
-          // 將 Res 10 格子轉換為 Res 11 格子
           for (const res10Hex of res10Hexes) {
             const children = getH3CellChildren(res10Hex, 11);
             for (const childHex of children) {
               migratedHexes.add(childHex);
             }
-            // 移除舊的 Res 10 格子
             migratedHexes.delete(res10Hex);
           }
           
@@ -1320,131 +1346,146 @@ export const useSessionStore = create<SessionStore>()(
         }
       }
       
-      // ⭐ 需求 1：排除當前會話的 H3（只渲染歷史數據，不包括本次採集）
       const currentSessionId = gpsHistoryService.getCurrentSessionId();
-      
-      // ⭐ 需求 2：從多個來源獲取歷史點（只包含已結束的會話）
-      // 1. 從 this.history 獲取（7天歷史）
-      const historyPoints = gpsHistoryService.getHistoryPointsByDays(7);
-      
-      // 2. 從所有已結束的會話中獲取點（排除當前會話）
       const allSessions = gpsHistoryService.getAllSessions();
       const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-      const sessionPoints: any[] = [];
       
-      for (const session of allSessions) {
-        // ⭐ 關鍵：排除當前會話
-        if (session.sessionId === currentSessionId) {
-          continue;
-        }
-        
-        // 只包含過去7天內且已結束的會話
-        if (session.startTime >= sevenDaysAgo && session.endTime) {
-          sessionPoints.push(...session.points);
-        }
-      }
-      
-      // 合併並去重（基於 timestamp + lat + lng）
-      const allPoints = [...historyPoints, ...sessionPoints];
-      const uniquePoints = new Map<string, any>();
-      
-      for (const point of allPoints) {
-        const key = `${point.timestamp}_${point.latitude.toFixed(6)}_${point.longitude.toFixed(6)}`;
-        if (!uniquePoints.has(key)) {
-          uniquePoints.set(key, point);
-        }
-      }
-      
-      console.log('[SessionStore] 📊 Total unique points:', uniquePoints.size, {
-        fromHistory: historyPoints.length,
-        fromSessions: sessionPoints.length,
-      });
-      
-      // ⭐ 修復 3：轉換為H3索引並去重，添加路徑補間邏輯
-      // ⭐ 關鍵修復：從 existingHexes 開始，而不是空 Set
+      // ⭐⭐⭐ 方案 C：改為按 session 分組處理（避免跨 session 插值）
       const hexSet = new Set<string>(existingHexes);
-      let successCount = 0;
-      let failCount = 0;
-      let interpolatedCount = 0;
-      let lastHex: string | null = null; // ⚡️ 追蹤上一個格子，用於路徑補間
+      let totalSuccessCount = 0;
+      let totalInterpolatedCount = 0;
+      let totalPointsProcessed = 0;
+      let sessionsProcessed = 0;
+      let sessionsSkippedTooFar = 0;
       
-      // ⚡️ 動態導入 H3 模組以使用 gridPathCells
+      // 動態導入 H3 模組
       const h3Utils = require('../core/math/h3');
       const h3Module = h3Utils.getH3ModuleSync();
       const hasGridPathCells = h3Module && typeof h3Module.gridPathCells === 'function';
       
-      // ⚡️ 將 uniquePoints 轉換為陣列並按時間排序，確保路徑順序正確
-      const sortedPoints = Array.from(uniquePoints.values()).sort((a, b) => a.timestamp - b.timestamp);
+      // ⭐⭐⭐ 方案 B：限制插值距離（約 100-200 米）
+      const MAX_INTERPOLATION_CELLS = 20;
       
-      for (const point of sortedPoints) {
-        try {
-          // 驗證座標有效性
-          if (!isFinite(point.latitude) || !isFinite(point.longitude) ||
-              Math.abs(point.latitude) > 90 || Math.abs(point.longitude) > 180) {
-            failCount++;
-            continue;
-          }
-          
-          const currentHex = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
-          if (currentHex && currentHex.length > 0) {
-            // ⚡️ 如果有上一個格子且與當前格子不同，嘗試路徑補間
-            if (lastHex && lastHex !== currentHex && hasGridPathCells) {
-              try {
-                // 填補中間的格子
-                const pathCells = h3Module.gridPathCells(lastHex, currentHex);
-                pathCells.forEach((cell: string) => {
-                  hexSet.add(cell);
-                  interpolatedCount++;
-                });
-                successCount++;
-              } catch (error) {
-                // 距離太遠（瞬移）或計算失敗，只加當前格子
-                hexSet.add(currentHex);
-                successCount++;
-              }
-            } else {
-              // 第一個點、相同格子或無法使用路徑補間
-              hexSet.add(currentHex);
-              successCount++;
+      console.log('[SessionStore] 🔄 Processing sessions with controlled interpolation (方案 B+C):', {
+        totalSessions: allSessions.length,
+        currentSessionId: currentSessionId ? currentSessionId.substring(0, 20) + '...' : 'none',
+        hasGridPathCells,
+        maxInterpolationCells: MAX_INTERPOLATION_CELLS,
+      });
+      
+      for (const session of allSessions) {
+        // 排除當前會話
+        if (session.sessionId === currentSessionId) {
+          continue;
+        }
+        
+        // 只處理過去 7 天且已結束的會話
+        if (session.startTime < sevenDaysAgo || !session.endTime) {
+          continue;
+        }
+        
+        if (!session.points || session.points.length === 0) {
+          continue;
+        }
+        
+        // ⭐⭐⭐ 關鍵：每個 session 獨立處理，不跨 session 插值
+        let lastHex: string | null = null;
+        let sessionInterpolatedCount = 0;
+        let sessionSkippedCount = 0;
+        let sessionPointsCount = 0;
+        
+        for (const point of session.points) {
+          try {
+            // 驗證座標有效性
+            if (!isFinite(point.latitude) || !isFinite(point.longitude) ||
+                Math.abs(point.latitude) > 90 || Math.abs(point.longitude) > 180) {
+              continue;
             }
             
-            lastHex = currentHex; // 更新最後一個格子
-          } else {
-            failCount++;
-            if (failCount <= 5) { // 只記錄前5個失敗案例，避免日誌過多
-              console.warn('[SessionStore] ⚠️  Failed to convert point to H3:', {
-                lat: point.latitude,
-                lng: point.longitude,
-                timestamp: point.timestamp,
-              });
+            const currentHex = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
+            
+            if (!currentHex || currentHex.length === 0) {
+              continue;
             }
-          }
-        } catch (error) {
-          failCount++;
-          if (failCount <= 5) {
-            console.warn('[SessionStore] ⚠️  Error converting point to H3:', error, point);
+            
+            sessionPointsCount++;
+            
+            // ⭐⭐⭐ 方案 B：插值前先檢查距離
+            if (lastHex && lastHex !== currentHex && hasGridPathCells) {
+              try {
+                const pathCells = h3Module.gridPathCells(lastHex, currentHex);
+                
+                // 限制插值數量（避免不合理的遠距離填補）
+                if (pathCells.length <= MAX_INTERPOLATION_CELLS) {
+                  pathCells.forEach((cell: string) => {
+                    hexSet.add(cell);
+                    sessionInterpolatedCount++;
+                  });
+                  totalSuccessCount++;
+                } else {
+                  // 距離太遠，跳過插值（可能是 GPS 跳動或長時間暫停）
+                  console.warn(`[SessionStore] ⚠️ Skipped interpolation: ${pathCells.length} cells (too far, session: ${session.sessionId.substring(0, 20)})`);
+                  hexSet.add(currentHex);
+                  totalSuccessCount++;
+                  sessionSkippedCount++;
+                }
+              } catch (error) {
+                // 插值失敗，只加當前格子
+                hexSet.add(currentHex);
+                totalSuccessCount++;
+              }
+            } else {
+              // 第一個點或相同格子
+              hexSet.add(currentHex);
+              totalSuccessCount++;
+            }
+            
+            lastHex = currentHex;
+          } catch (error) {
+            console.warn('[SessionStore] Failed to convert point to H3:', error);
           }
         }
+        
+        // ⭐⭐⭐ 換到下一個 session 時，重置 lastHex（關鍵！防止跨 session 插值）
+        lastHex = null;
+        
+        totalPointsProcessed += sessionPointsCount;
+        totalInterpolatedCount += sessionInterpolatedCount;
+        sessionsProcessed++;
+        
+        if (sessionSkippedCount > 0) {
+          sessionsSkippedTooFar++;
+        }
+        
+        console.log(`[SessionStore] ✅ Processed session ${sessionsProcessed}/${allSessions.length}:`, {
+          sessionId: session.sessionId.substring(0, 20) + '...',
+          points: sessionPointsCount,
+          interpolated: sessionInterpolatedCount,
+          skipped: sessionSkippedCount,
+        });
       }
       
+      // 更新 store
       set({ exploredHexes: hexSet });
       
-      // ⭐ 關鍵修復：手動觸發 persist 保存（確保數據寫入）
-      // persist middleware 會自動處理，但我們強制觸發一次狀態更新確保保存
+      // 強制觸發 persist 保存
       useSessionStore.setState({ exploredHexes: hexSet });
       
-      console.log('[SessionStore] ✅ Static H3 hexagons loaded and saved (excluding current session)', {
-        totalPoints: uniquePoints.size,
-        successCount,
-        failCount,
-        interpolatedCount,
+      console.log('[SessionStore] ✅ updateExploredHexesFromHistory completed (方案 B+C):', {
+        totalSessions: allSessions.length,
+        sessionsProcessed,
+        sessionsSkippedTooFar,
+        totalPoints: totalPointsProcessed,
+        totalSuccessCount,
+        totalInterpolatedCount,
         exploredHexesCount: hexSet.size,
         persistedHexesCount: state.exploredHexes.size,
-        currentSessionExcluded: currentSessionId ? 'yes' : 'no',
+        addedHexes: hexSet.size - state.exploredHexes.size,
         pathInterpolationEnabled: hasGridPathCells,
+        maxInterpolationCells: MAX_INTERPOLATION_CELLS,
       });
     } catch (error) {
-      console.error('[SessionStore] ❌ Failed to update explored hexes from history:', error);
+      console.error('[SessionStore] ❌ updateExploredHexesFromHistory failed:', error);
     }
   },
   

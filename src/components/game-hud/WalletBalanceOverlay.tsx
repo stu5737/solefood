@@ -69,17 +69,17 @@ const styles = StyleSheet.create({
     gap: 8, // 與體力條的 gap 一致
   },
   iconContainer: {
-    width: 48, // 再放大圖標（從 40 到 48）
-    height: 48,
+    width: 56, // 放大資產圖標（從 48 到 56）
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
   },
   tokenIcon: {
-    width: 48, // 再放大圖標（從 40 到 48）
-    height: 48,
+    width: 56, // 放大資產圖標（從 48 到 56）
+    height: 56,
   },
   balanceText: {
-    fontSize: 16, // 再放大數字，更清晰易讀
+    fontSize: 14, // 與 IdleTopHUD 中的資產數字協調（統一為 14）
     fontWeight: '700',
     color: '#FFF',
     fontFamily: 'monospace',

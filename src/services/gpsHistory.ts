@@ -33,6 +33,7 @@ export interface CollectionSession {
   totalDistance: number; // 總距離（km）
   duration?: number; // 持續時間（秒）
   endType?: 'picnic' | 'unload' | 'manual'; // 結束類型：就地野餐、餐廳卸貨 或 手動停止
+  lastActiveTime?: number; // ✅ 最後活動時間（用於檢測僵尸會話）
 }
 
 /**
@@ -147,6 +148,34 @@ class GPSHistoryService {
           console.log('[GPSHistoryService] ⏰ Periodic save triggered');
         }
       }, 30000); // 30 秒
+      
+      // ✅ 新增：清理僵尸會話（沒有 endTime 且超過 1 小時沒活動的會話）
+      const now = Date.now();
+      const ONE_HOUR = 60 * 60 * 1000;
+      let zombieCount = 0;
+      
+      Array.from(this.sessions.values()).forEach(session => {
+        if (!session.endTime) {
+          const lastActive = session.lastActiveTime || session.startTime;
+          const inactiveDuration = now - lastActive;
+          
+          if (inactiveDuration > ONE_HOUR) {
+            console.warn('[GPSHistoryService] 🧹 清理僵尸會話:', {
+              id: session.sessionId,
+              不活躍時長: `${(inactiveDuration / 1000 / 60).toFixed(0)}分鐘`,
+              開始時間: new Date(session.startTime).toLocaleString(),
+            });
+            this.sessions.delete(session.sessionId);
+            zombieCount++;
+          }
+        }
+      });
+      
+      if (zombieCount > 0) {
+        console.log(`[GPSHistoryService] ✅ 清理了 ${zombieCount} 個僵尸會話`);
+        // 立即保存清理後的數據
+        await this.saveSessions();
+      }
       
       this.initialized = true;
       console.log('[GPSHistoryService] ✅ Initialization completed successfully');
@@ -328,6 +357,13 @@ class GPSHistoryService {
       return;
     }
 
+    // ✅ 新增：立即更新會話的最後活動時間（用於檢測僵尸會話）
+    // 提前獲取 session，後續代碼會重用此變量
+    let session = this.sessions.get(this.currentSessionId);
+    if (session) {
+      session.lastActiveTime = Date.now();
+    }
+
     // ========== 第一層：精度過濾 (Accuracy Gate) ==========
     // 檢查 GPS 精度，如果誤差超過 40m，這數據完全不可信（室內或高樓反射）
     const accuracy = location.accuracy || 0;
@@ -453,8 +489,7 @@ class GPSHistoryService {
       this.currentSessionPoints = this.currentSessionPoints.slice(-MAX_SESSION_POINTS);
     }
     
-    // 更新會話記錄
-    const session = this.sessions.get(this.currentSessionId);
+    // 更新會話記錄（重用前面已獲取的 session 變量）
     if (session) {
       session.points.push(point);
       // ✅ 修復：使用 smoothedDistance（單位：km），而不是 distance（單位：米）
@@ -481,8 +516,8 @@ class GPSHistoryService {
 
     this.saveCounter++;
 
-    // ⭐ 修復：每 5 個點保存一次（而不是 10 個），減少數據丟失風險
-    if (this.saveCounter >= 5) {
+    // ⭐ 修復：每 2 個點保存一次（從 5 改為 2），最大程度減少閃退時的數據丟失
+    if (this.saveCounter >= 2) {
       this.saveCounter = 0;
       this.saveToStorage();
       this.saveSessions(); // ⭐ 同時保存會話

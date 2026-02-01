@@ -14,6 +14,8 @@
 		A5C231BC503A8F3ABA149E5C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6B633C25C72C4BD91941EA /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		F11748472D0722A00044C1D9 /* FoodDropAnnotationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748482D0722A00044C1D9 /* FoodDropAnnotationView.swift */; };
+		7A8B9C0D1E2F3A4B5C6D7E8F /* test.gpx in Resources */ = {isa = PBXBuildFile; fileRef = 8B9C0D1E2F3A4B5C6D7E8F9A0B /* test.gpx */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +32,8 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SolefoodMVP/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* SolefoodMVP-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "SolefoodMVP-Bridging-Header.h"; path = "SolefoodMVP/SolefoodMVP-Bridging-Header.h"; sourceTree = "<group>"; };
+		F11748482D0722A00044C1D9 /* FoodDropAnnotationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FoodDropAnnotationView.swift; path = SolefoodMVP/FoodDropAnnotationView.swift; sourceTree = "<group>"; };
+		8B9C0D1E2F3A4B5C6D7E8F9A0B /* test.gpx */ = {isa = PBXFileReference; lastKnownFileType = text; name = test.gpx; path = SolefoodMVP/test.gpx; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -48,12 +52,14 @@
 			isa = PBXGroup;
 			children = (
 				F11748412D0307B40044C1D9 /* AppDelegate.swift */,
+				F11748482D0722A00044C1D9 /* FoodDropAnnotationView.swift */,
 				F11748442D0722820044C1D9 /* SolefoodMVP-Bridging-Header.h */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				C2A85D25ED94E2C62C3E51EA /* PrivacyInfo.xcprivacy */,
+				8B9C0D1E2F3A4B5C6D7E8F9A0B /* test.gpx */,
 			);
 			name = SolefoodMVP;
 			sourceTree = "<group>";
@@ -196,6 +202,7 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				7309B34D790810F3FE427753 /* PrivacyInfo.xcprivacy in Resources */,
+				7A8B9C0D1E2F3A4B5C6D7E8F /* test.gpx in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -341,6 +348,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
+				F11748472D0722A00044C1D9 /* FoodDropAnnotationView.swift in Sources */,
 				A5C231BC503A8F3ABA149E5C /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

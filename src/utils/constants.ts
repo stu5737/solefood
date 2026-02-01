@@ -81,7 +81,8 @@ export const UNLOADING = {
 // 變現倍率矩陣
 export const PAYOUT_MATRIX = {
   NORMAL: 1.0,              // M Normal: 自己搬 (1.0x)
-  PORTER: 2.0,              // M Ad: 請人搬 (2.0x, 看廣告)
+  PORTER: 1.5,              // 隨地卸貨看影片叫貨車 (1.5x)
+  PORTER_AT_RESTAURANT: 2.0, // 到達餐廳按廣告卸貨 (2x)
   DATA: 10.0,               // M Info: 店家搬 (10.0x, 拍照上傳)
 } as const;
 

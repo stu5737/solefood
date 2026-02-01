@@ -8,6 +8,10 @@
     "android": "./run-android.sh",
     "android:build": "./scripts/build-android-dev.sh",
     "ios": "expo run:ios",
+    "ios:gpx": "python3 ios/update_gpx_time.py && npx expo run:ios",
+    "ios:test": "python3 ios/update_test_gpx.py && npx expo run:ios",
+    "update-gpx": "python3 ios/update_gpx_time.py",
+    "update-test": "python3 ios/update_test_gpx.py",
     "web": "expo start --web",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

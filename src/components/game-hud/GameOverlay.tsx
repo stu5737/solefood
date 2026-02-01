@@ -54,7 +54,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
     <View style={styles.container} pointerEvents="box-none">
       {/* 底部 GO 按鈕（去採集）- 僅 IDLE 顯示，開始採集後消失 */}
       {showBottomButton && (
-        <View style={[styles.bottomSection, { bottom: insets.bottom + 20 }]} pointerEvents="box-none">
+        <View style={[styles.bottomSection, { bottom: insets.bottom + 18 }]} pointerEvents="box-none">
           <SolefoodButton
             onPress={onActionPress}
             imageSource={require('../../../assets/images/forage_button.png')}

@@ -52,7 +52,7 @@ export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
         {/* 體力條（簡短版，bar 內顯示百分比，無底色） */}
         <View style={styles.staminaCard}>
           <View style={styles.staminaIconContainer}>
-            <StaminaIcon size={56} />
+            <StaminaIcon size={48} />
           </View>
           <View style={styles.staminaBarContainer}>
             <View style={styles.progressTrack}>
@@ -107,8 +107,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   staminaIconContainer: {
-    width: 56, // 放大火焰圖標
-    height: 56,
+    width: 48, // 火焰圖標大小
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   percentageText: {
-    fontSize: 11,
+    fontSize: 13, // 增大體力百分比字體（從 11 到 13），與資產數字協調
     fontWeight: '700',
     color: '#FFF',
     fontFamily: 'monospace',
@@ -147,17 +147,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   balanceIconContainer: {
-    width: 48, // 與 WalletBalanceOverlay 一致
-    height: 48,
+    width: 56, // 放大資產圖標（從 48 到 56）
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
   },
   tokenIcon: {
-    width: 48,
-    height: 48,
+    width: 56, // 放大資產圖標（從 48 到 56）
+    height: 56,
   },
   balanceText: {
-    fontSize: 16,
+    fontSize: 14, // 稍微減小資產數字字體（從 16 到 14），與體力百分比協調
     fontWeight: '700',
     color: '#FFF',
     fontFamily: 'monospace',

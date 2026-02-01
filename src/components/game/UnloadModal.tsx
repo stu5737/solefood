@@ -1,11 +1,7 @@
 /**
- * 卸貨變現矩陣模態框
- * Solefood MVP v8.7 (Final Consolidated Edition)
- * 
- * 提供三種卸貨選項：
- * 1. M Normal：自己搬（1.0x，扣除體力）
- * 2. M Ad：請人搬（2.0x，看廣告，免除體力）
- * 3. M Info：店家搬（10.0x，拍照上傳，僅金霧節點）
+ * 卸貨變現模態框
+ * - 隨地卸貨（主按鈕）：兩按鈕 = 就地野餐 0x／看影片叫貨車 1.5x
+ * - 餐廳圖標卸貨（需 GPS 到點）：三按鈕 = 自己搬 1x／按廣告卸貨 2x／拍照 10x
  */
 
 import React, { useState } from 'react';
@@ -14,9 +10,9 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
+  Pressable,
   ActivityIndicator,
-  ScrollView,
+  Image,
 } from 'react-native';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useInventoryStore } from '../../stores/inventoryStore';
@@ -25,216 +21,293 @@ import { calculateUnloadStaminaCost } from '../../core/math/unloading';
 import { PAYOUT_MATRIX } from '../../utils/constants';
 import type { PayoutMode } from '../../types/game';
 
+const STAMINA_ICON = require('../../../assets/images/stamina_icon.png');
+const TRUCK_ICON = require('../../../assets/images/truck_icon.png');
+const AD_ICON = require('../../../assets/images/ad_icon.png');
+const HANDTRUCK_ICON = require('../../../assets/images/handtruck_icon.png');
+const UNLOAD_ICON = require('../../../assets/images/unload_icon.png');
+const CAMERA_ICON = require('../../../assets/images/camera_icon.png');
+const SOIL_TOKEN_ICON = require('../../../assets/images/soil_token_icon.png');
+const PICNIC_ICON = require('../../../assets/images/picnic_icon.png');
+
+async function watchAd(): Promise<boolean> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(true), 1000);
+  });
+}
+
 export interface UnloadModalProps {
   visible: boolean;
   onClose: () => void;
   onSuccess?: (revenue: number) => void;
-  isGoldenMistNode?: boolean; // 是否為金霧節點
-}
-
-/**
- * 模擬觀看廣告（實際應用中應整合真實的廣告 SDK）
- */
-async function watchAd(): Promise<boolean> {
-  // TODO: 整合真實的廣告 SDK（如 Google AdMob）
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(true);
-    }, 1000); // 模擬 1 秒廣告
-  });
+  /** 選擇「就地野餐」時呼叫（僅隨地卸貨兩按鈕時） */
+  onPicnic?: () => void;
+  /** 隨地卸貨（主按鈕）→ 兩按鈕；餐廳圖標卸貨（需到點）→ 三按鈕 */
+  unloadSource?: 'anywhere' | 'restaurant';
+  /** 餐廳模式時，是否為金霧節點（解鎖 10x 拍照） */
+  isGoldenMistNode?: boolean;
 }
 
 export function UnloadModal({
   visible,
   onClose,
   onSuccess,
+  onPicnic,
+  unloadSource = 'anywhere',
   isGoldenMistNode = false,
 }: UnloadModalProps) {
   const [selectedMode, setSelectedMode] = useState<PayoutMode | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const playerState = usePlayerStore();
   const inventoryStore = useInventoryStore();
+  const stamina = playerState.stamina;
+  const maxStamina = playerState.maxStamina;
+  const picnicRecover = Math.min(30, maxStamina - stamina);
 
   const totalWeight = inventoryStore.totalWeight;
   const items = inventoryStore.items;
-
-  // 計算卸貨體力成本
-  const unloadStaminaCost = calculateUnloadStaminaCost(totalWeight);
+  const itemCount = items.length;
+  const porterPreview = calculateSettlement('porter', unloadSource);
+  const normalPreview = calculateSettlement('normal');
+  const dataPreview = calculateSettlement('data');
+  const porterMultiplier = unloadSource === 'restaurant' ? PAYOUT_MATRIX.PORTER_AT_RESTAURANT : PAYOUT_MATRIX.PORTER;
+  const unloadStaminaCost = Math.round(calculateUnloadStaminaCost(totalWeight));
   const canUnloadNormal = playerState.stamina >= unloadStaminaCost;
 
-  // 計算各模式的收益預覽
-  const normalPreview = calculateSettlement('normal');
-  const porterPreview = calculateSettlement('porter');
-  const dataPreview = isGoldenMistNode ? calculateSettlement('data') : null;
+  const handlePicnic = () => {
+    onClose();
+    onPicnic?.();
+  };
 
   const handleUnload = async (mode: PayoutMode) => {
-    if (mode === 'normal' && !canUnloadNormal) {
-      return; // 體力不足，按鈕應該已禁用
-    }
-
+    if (mode === 'normal' && !canUnloadNormal) return;
     setSelectedMode(mode);
     setIsProcessing(true);
-
     try {
       if (mode === 'porter' || mode === 'data') {
-        // 需要觀看廣告
-        const success = await watchAd();
-        if (!success) {
-          // 廣告載入失敗
+        const ok = await watchAd();
+        if (!ok) {
           setIsProcessing(false);
           setSelectedMode(null);
           return;
         }
       }
-
-      // 執行卸貨結算
-      const result = executeUnloadSettlement(mode);
-
+      const result = executeUnloadSettlement(mode, unloadSource);
       setIsProcessing(false);
       setSelectedMode(null);
       onClose();
       onSuccess?.(result.revenue);
-    } catch (error) {
-      console.error('[UnloadModal] Error unloading:', error);
+    } catch (e) {
+      console.error('[UnloadModal]', e);
       setIsProcessing(false);
       setSelectedMode(null);
     }
   };
 
-  if (items.length === 0) {
-    return null;
-  }
+  const handlePorter = async () => {
+    await handleUnload('porter');
+  };
+
+  if (items.length === 0) return null;
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <Text style={styles.title}>💰 卸貨變現</Text>
-          
-          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* M Normal */}
-            <TouchableOpacity
-              style={[
-                styles.option,
-                !canUnloadNormal && styles.optionDisabled,
-                selectedMode === 'normal' && styles.optionSelected,
-              ]}
-              onPress={() => handleUnload('normal')}
-              disabled={!canUnloadNormal || isProcessing}
-            >
-              <View style={styles.optionHeader}>
-                <Text style={styles.optionTitle}>M Normal</Text>
-                <Text style={styles.optionMultiplier}>{PAYOUT_MATRIX.NORMAL}x</Text>
-              </View>
-              <Text style={styles.optionDescription}>自己搬運</Text>
-              <View style={styles.optionDetails}>
-                <Text style={styles.optionDetail}>
-                  體力消耗：{unloadStaminaCost.toFixed(0)} pts
-                </Text>
-                <Text style={styles.optionDetail}>
-                  預期收益：${normalPreview.revenue.toFixed(2)} SOLE
-                </Text>
-              </View>
-              {!canUnloadNormal && (
-                <Text style={styles.optionWarning}>
-                  體力不足（需要 {unloadStaminaCost.toFixed(0)} pts）
-                </Text>
-              )}
-              {isProcessing && selectedMode === 'normal' && (
-                <ActivityIndicator style={styles.loader} color="#4CAF50" />
-              )}
-            </TouchableOpacity>
-
-            {/* M Ad (Porter) */}
-            <TouchableOpacity
-              style={[
-                styles.option,
-                styles.optionRecommended,
-                selectedMode === 'porter' && styles.optionSelected,
-              ]}
-              onPress={() => handleUnload('porter')}
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={styles.centered} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.topRow}>
+            <Text style={styles.header}>
+              📦 {itemCount} Items  ·  ⚖️ {totalWeight.toFixed(1)}kg
+            </Text>
+            <Pressable
+              style={({ pressed }) => [styles.closeBtn, pressed && styles.closeBtnPressed]}
+              onPress={onClose}
               disabled={isProcessing}
+              hitSlop={12}
             >
-              <View style={styles.optionHeader}>
-                <Text style={styles.optionTitle}>M Ad (Porter)</Text>
-                <Text style={styles.optionMultiplier}>{PAYOUT_MATRIX.PORTER}x</Text>
-              </View>
-              <Text style={styles.optionDescription}>請人搬運（觀看廣告）</Text>
-              <View style={styles.optionDetails}>
-                <Text style={styles.optionDetail}>
-                  體力消耗：免除
-                </Text>
-                <Text style={styles.optionDetail}>
-                  預期收益：${porterPreview.revenue.toFixed(2)} SOLE
-                </Text>
-                <Text style={styles.optionBenefit}>
-                  💡 收益翻倍 + 節省 {unloadStaminaCost.toFixed(0)} 體力
-                </Text>
-              </View>
-              {isProcessing && selectedMode === 'porter' && (
-                <ActivityIndicator style={styles.loader} color="#2196F3" />
-              )}
-            </TouchableOpacity>
+              <Text style={styles.closeSymbol}>×</Text>
+            </Pressable>
+          </View>
 
-            {/* M Info (Data) - 僅金霧節點 */}
-            {isGoldenMistNode && dataPreview && (
-              <TouchableOpacity
-                style={[
-                  styles.option,
-                  styles.optionPremium,
-                  selectedMode === 'data' && styles.optionSelected,
-                ]}
-                onPress={() => handleUnload('data')}
-                disabled={isProcessing}
-              >
-                <View style={styles.optionHeader}>
-                  <Text style={styles.optionTitle}>M Info (Data)</Text>
-                  <Text style={styles.optionMultiplier}>{PAYOUT_MATRIX.DATA}x</Text>
+          {/* 兩按鈕與三按鈕：同一按鈕尺寸、設計一致（折衷 118px） */}
+          <View style={styles.row}>
+            {unloadSource === 'anywhere' ? (
+              <>
+                {/* 1. 就地野餐（0x） */}
+                <View style={styles.optionCol}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual]}>
+                    <Text style={styles.multiplierTextDark}>0x</Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.squareBtn,
+                      styles.cardBase,
+                      pressed && styles.squareBtnPressed,
+                    ]}
+                    onPress={handlePicnic}
+                    disabled={isProcessing}
+                  >
+                    <View style={styles.squareInner}>
+                      <View style={styles.picnicIconWrap}>
+                        <Image source={PICNIC_ICON} style={styles.squareIcon} resizeMode="contain" />
+                      </View>
+                      <View style={styles.squarePriceRow}>
+                        <Image source={SOIL_TOKEN_ICON} style={styles.squareSoilIcon} resizeMode="contain" />
+                        <Text style={styles.priceBase}>0</Text>
+                      </View>
+                      <View style={styles.squareStaminaRow}>
+                        <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
+                        <Text style={styles.staminaFree}>+{picnicRecover}</Text>
+                      </View>
+                    </View>
+                  </Pressable>
                 </View>
-                <Text style={styles.optionDescription}>店家搬運（拍照上傳）</Text>
-                <View style={styles.optionDetails}>
-                  <Text style={styles.optionDetail}>
-                    體力消耗：免除
-                  </Text>
-                  <Text style={styles.optionDetail}>
-                    預期收益：${dataPreview.revenue.toFixed(2)} SOLE
-                  </Text>
-                  <Text style={styles.optionBenefit}>
-                    ⭐ 極致暴利：收益 10 倍！
-                  </Text>
+                {/* 2. 看影片叫貨車（1.5x） */}
+                <View style={styles.optionCol}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter]}>
+                    <Image source={AD_ICON} style={styles.multiplierBadgeIcon} resizeMode="contain" />
+                    <Text style={styles.multiplierTextDark}>{porterMultiplier}x</Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.squareBtn,
+                      styles.cardBase,
+                      pressed && styles.squareBtnPressed,
+                    ]}
+                    onPress={handlePorter}
+                    disabled={isProcessing}
+                  >
+                    {isProcessing && selectedMode === 'porter' ? (
+                      <ActivityIndicator size="small" color="#333" style={styles.loader} />
+                    ) : (
+                      <View style={styles.squareInner}>
+                        <View style={styles.truckIconWrap}>
+                          <Image source={TRUCK_ICON} style={styles.truckIcon} resizeMode="contain" />
+                        </View>
+                        <View style={styles.squarePriceRow}>
+                          <Image source={SOIL_TOKEN_ICON} style={styles.squareSoilIcon} resizeMode="contain" />
+                          <Text style={styles.priceBase}>{porterPreview.revenue.toFixed(0)}</Text>
+                        </View>
+                        <View style={styles.squareStaminaRow}>
+                          <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
+                          <Text style={styles.staminaFree}>FREE</Text>
+                        </View>
+                      </View>
+                    )}
+                  </Pressable>
                 </View>
-                {isProcessing && selectedMode === 'data' && (
-                  <ActivityIndicator style={styles.loader} color="#FF9800" />
-                )}
-              </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                {/* 餐廳卸貨：1. 自己搬（1x） */}
+                <View style={styles.optionCol}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual]}>
+                    <Text style={styles.multiplierTextDark}>{PAYOUT_MATRIX.NORMAL}x</Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.squareBtn,
+                      styles.cardBase,
+                      !canUnloadNormal && styles.cardDisabled,
+                      pressed && styles.squareBtnPressed,
+                    ]}
+                    onPress={() => handleUnload('normal')}
+                    disabled={!canUnloadNormal || isProcessing}
+                  >
+                    {isProcessing && selectedMode === 'normal' ? (
+                      <ActivityIndicator size="small" color="#333" style={styles.loader} />
+                    ) : (
+                      <View style={styles.squareInner}>
+                        <View style={styles.unloadIconWrap}>
+                          <Image source={UNLOAD_ICON} style={styles.unloadIcon} resizeMode="contain" />
+                        </View>
+                        <View style={styles.squarePriceRow}>
+                          <Image source={SOIL_TOKEN_ICON} style={styles.squareSoilIcon} resizeMode="contain" />
+                          <Text style={styles.priceBase}>{normalPreview.revenue.toFixed(0)}</Text>
+                        </View>
+                        <View style={styles.squareStaminaRow}>
+                          <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
+                          <Text style={styles.staminaCost}>-{unloadStaminaCost}</Text>
+                        </View>
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+                {/* 2. 按廣告卸貨（2x）- 餐廳用 handtruck_icon */}
+                <View style={styles.optionCol}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter]}>
+                    <Image source={AD_ICON} style={styles.multiplierBadgeIcon} resizeMode="contain" />
+                    <Text style={styles.multiplierTextDark}>{porterMultiplier}x</Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.squareBtn,
+                      styles.cardBase,
+                      pressed && styles.squareBtnPressed,
+                    ]}
+                    onPress={() => handleUnload('porter')}
+                    disabled={isProcessing}
+                  >
+                    {isProcessing && selectedMode === 'porter' ? (
+                      <ActivityIndicator size="small" color="#333" style={styles.loader} />
+                    ) : (
+                      <View style={styles.squareInner}>
+                        <View style={styles.handtruckIconWrap}>
+                          <Image source={HANDTRUCK_ICON} style={styles.handtruckIcon} resizeMode="contain" />
+                        </View>
+                        <View style={styles.squarePriceRow}>
+                          <Image source={SOIL_TOKEN_ICON} style={styles.squareSoilIcon} resizeMode="contain" />
+                          <Text style={styles.priceBase}>{porterPreview.revenue.toFixed(0)}</Text>
+                        </View>
+                        <View style={styles.squareStaminaRow}>
+                          <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
+                          <Text style={styles.staminaFree}>FREE</Text>
+                        </View>
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+                {/* 3. 拍照 10x（金霧節點可點） */}
+                <View style={styles.optionCol}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveData]}>
+                    <Text style={styles.multiplierTextDark}>{PAYOUT_MATRIX.DATA}x</Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.squareBtn,
+                      styles.cardBase,
+                      !isGoldenMistNode && styles.cardDisabled,
+                      pressed && styles.squareBtnPressed,
+                    ]}
+                    onPress={() => isGoldenMistNode && handleUnload('data')}
+                    disabled={!isGoldenMistNode || isProcessing}
+                  >
+                    {isProcessing && selectedMode === 'data' ? (
+                      <ActivityIndicator size="small" color="#333" style={styles.loader} />
+                    ) : (
+                      <View style={styles.squareInner}>
+                        <Image source={CAMERA_ICON} style={styles.cameraIcon} resizeMode="contain" />
+                        <View style={styles.squarePriceRow}>
+                          <Image source={SOIL_TOKEN_ICON} style={styles.squareSoilIcon} resizeMode="contain" />
+                          <Text style={styles.priceBase}>{dataPreview.revenue.toFixed(0)}</Text>
+                        </View>
+                        <View style={styles.squareStaminaRow}>
+                          <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
+                          <Text style={styles.staminaFree}>FREE</Text>
+                        </View>
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+              </>
             )}
-
-            {/* 物品摘要 */}
-            <View style={styles.summary}>
-              <Text style={styles.summaryTitle}>物品摘要</Text>
-              <Text style={styles.summaryText}>
-                總重量：{totalWeight.toFixed(1)}kg
-              </Text>
-              <Text style={styles.summaryText}>
-                物品數量：{items.length}
-              </Text>
-            </View>
-          </ScrollView>
-
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={onClose}
-            disabled={isProcessing}
-          >
-            <Text style={styles.closeButtonText}>取消</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -242,119 +315,200 @@ export function UnloadModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modal: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    maxHeight: '80%',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  content: {
-    marginBottom: 16,
-  },
-  option: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  optionRecommended: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  optionPremium: {
-    backgroundColor: '#FFF3E0',
-    borderColor: '#FF9800',
-  },
-  optionDisabled: {
-    opacity: 0.5,
-  },
-  optionSelected: {
-    borderColor: '#4CAF50',
-    backgroundColor: '#E8F5E9',
-  },
-  optionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 20,
   },
-  optionTitle: {
+  centered: {
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+    alignSelf: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderRadius: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 14,
+    paddingRight: 4,
+  },
+  header: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.95)',
+    flex: 1,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnPressed: {
+    opacity: 0.8,
+  },
+  closeSymbol: {
+    fontSize: 24,
+    fontWeight: '300',
+    color: 'rgba(255, 255, 255, 0.95)',
+    lineHeight: 28,
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+    alignSelf: 'center',
+    justifyContent: 'center',
+  },
+  optionCol: {
+    width: 118,
+    alignItems: 'center',
+  },
+  multiplierAbove: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginBottom: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    zIndex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  multiplierBadgeIcon: {
+    width: 18,
+    height: 18,
+    marginRight: 5,
+  },
+  multiplierAboveManual: {
+    backgroundColor: '#E8E8E8',
+  },
+  multiplierAbovePorter: {
+    backgroundColor: '#D0E0F0',
+  },
+  multiplierAboveData: {
+    backgroundColor: '#F0E8D8',
+  },
+  squareBtn: {
+    width: 118,
+    height: 118,
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+    overflow: 'visible',
+  },
+  squareBtnPressed: {
+    opacity: 0.88,
+  },
+  cardBase: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  cardDisabled: {
+    opacity: 0.96,
+  },
+  multiplierTextDark: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#333',
+  },
+  squareInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  squareIcon: {
+    width: 52,
+    height: 52,
+  },
+  cameraIcon: {
+    width: 58,
+    height: 58,
+  },
+  picnicIconWrap: {
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: -12,
+  },
+  truckIcon: {
+    width: 64,
+    height: 64,
+  },
+  truckIconWrap: {
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: -12,
+  },
+  unloadIcon: {
+    width: 64,
+    height: 64,
+  },
+  unloadIconWrap: {
+    marginBottom: -6,
+  },
+  handtruckIcon: {
+    width: 64,
+    height: 64,
+  },
+  handtruckIconWrap: {
+    marginBottom: -6,
+  },
+  squarePriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  squareSoilIcon: {
+    width: 20,
+    height: 20,
+  },
+  priceBase: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    color: '#2C2C2C',
   },
-  optionMultiplier: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#4CAF50',
+  squareStaminaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
-  optionDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 12,
+  squareStaminaIcon: {
+    width: 22,
+    height: 22,
   },
-  optionDetails: {
-    marginTop: 8,
-  },
-  optionDetail: {
-    fontSize: 14,
-    color: '#333',
-    marginBottom: 4,
-  },
-  optionBenefit: {
-    fontSize: 14,
-    color: '#4CAF50',
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  optionWarning: {
+  staminaCost: {
     fontSize: 12,
-    color: '#F44336',
-    marginTop: 8,
-    fontStyle: 'italic',
+    fontWeight: '700',
+    color: '#B71C1C',
+  },
+  staminaFree: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#555',
   },
   loader: {
-    marginTop: 8,
-  },
-  summary: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 16,
-  },
-  summaryTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 8,
-  },
-  summaryText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  closeButton: {
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: '#E0E0E0',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    marginVertical: 8,
   },
 });
