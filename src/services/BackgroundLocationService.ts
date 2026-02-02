@@ -208,18 +208,11 @@ class BackgroundLocationService {
         }
       }
       
-      // ⭐ Android 特定配置
+      // ⭐ Android：不設前台服務，避免觸發「Foreground service cannot be started when in background」等 Console Error
+      // （原生層在 reject 時會印紅字，無法從 JS 關閉；改為僅前台模式可穩定啟動、無紅字）
       if (Platform.OS === 'android') {
-        // Android 需要前台服務才能在背景運行
-        taskOptions.foregroundService = {
-          notificationTitle: 'Solefood 運行中',
-          notificationBody: '正在背景記錄您的探索軌跡...',
-          notificationColor: '#22C55E', // 綠色
-        };
-        console.log('[BackgroundLocationService] ✅ Android: 已設置前台服務通知');
+        console.log('[BackgroundLocationService] Android: 使用僅前台模式（無前台服務通知，避免啟動錯誤）');
       }
-      
-      console.log('[BackgroundLocationService] 📋 任務配置:', JSON.stringify(taskOptions, null, 2));
       
       try {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, taskOptions);
@@ -253,25 +246,27 @@ class BackgroundLocationService {
           throw startError;
         }
         
-        // ⭐ 如果啟動失敗，嘗試降級方案（僅前台模式）
-        console.error('[BackgroundLocationService] ❌ 使用完整配置啟動失敗，嘗試降級方案...');
-        console.error('[BackgroundLocationService] 錯誤代碼:', startError?.code);
-        console.error('[BackgroundLocationService] 錯誤訊息:', errorMessage);
+        // ⭐ 如果啟動失敗，嘗試降級方案（僅前台模式，不開前台服務通知）
+        const isForegroundServiceNotAllowed = startError?.code === 'ERR_FOREGROUND_SERVICE_START_NOT_ALLOWED';
+        const isBackgroundStartError = /foreground service cannot be started when the application is in the background/i.test(errorMessage);
+        if (isBackgroundStartError) {
+          console.warn('[BackgroundLocationService] ⚠️ Android 不允許在背景時啟動前台服務，改為僅前台模式（請在 App 前景時再點「開始採集」可獲得完整背景追蹤）');
+        } else if (isForegroundServiceNotAllowed) {
+          console.warn('[BackgroundLocationService] ⚠️ Android 不允許啟動前台服務，改為僅前台模式（請在設定中將位置改為「一律允許」可獲得完整背景追蹤）');
+        } else {
+          console.warn('[BackgroundLocationService] ⚠️ 完整配置啟動失敗，改為僅前台模式（功能可能受限）');
+        }
+        console.warn('[BackgroundLocationService] 原因:', startError?.code || errorMessage);
         
-        // 降級方案：移除可能有問題的配置項
+        // 降級方案：不設 foregroundService，避免再次觸發 ERR_FOREGROUND_SERVICE_START_NOT_ALLOWED
         const fallbackOptions: Location.LocationTaskOptions = {
           accuracy: Location.Accuracy.BestForNavigation,
           timeInterval: 1000,
           distanceInterval: 5,
         };
-        
-        // 僅保留基本配置，嘗試啟動
-        if (Platform.OS === 'android' && currentBackgroundStatus !== 'granted') {
-          // Android 如果沒有後台權限，不設置前台服務
-          console.warn('[BackgroundLocationService] ⚠️  Android: 無後台權限，使用基本配置');
-        } else if (Platform.OS === 'android') {
-          // Android 有後台權限，保留前台服務
-          fallbackOptions.foregroundService = taskOptions.foregroundService;
+        // Android 降級時一律不設前台服務，否則可能再次報錯
+        if (Platform.OS === 'android') {
+          console.warn('[BackgroundLocationService] ⚠️  Android: 使用基本配置（無前台服務通知）');
         }
         
         try {
@@ -280,19 +275,42 @@ class BackgroundLocationService {
           this.isTracking = true;
           return true;
         } catch (fallbackError: any) {
-          console.error('[BackgroundLocationService] ❌ 降級方案也失敗:');
-          console.error('[BackgroundLocationService] 錯誤代碼:', fallbackError?.code);
-          console.error('[BackgroundLocationService] 錯誤訊息:', fallbackError?.message);
-          throw fallbackError; // 重新拋出錯誤
+          console.warn('[BackgroundLocationService] ❌ 降級方案也失敗，改為回傳 false（不拋出）:', fallbackError?.code, fallbackError?.message);
+          this.isTracking = false;
+          if (Platform.OS === 'android') {
+            Alert.alert(
+              '無法啟動位置追蹤',
+              '請確認：\n1. App 在前景時再點「開始採集」\n2. 設定中位置權限為「一律允許」\n3. 關閉省電/背景限制此 App 後重試。',
+              [{ text: '確定' }]
+            );
+          }
+          return false;
         }
       }
     } catch (error) {
-      console.error('[BackgroundLocationService] ❌ 啟動背景位置追蹤失敗:');
-      console.error('[BackgroundLocationService] 錯誤詳情:', error);
+      const err = error as any;
+      const msg = (err?.message ?? err?.error?.message ?? String(error)) || '';
+      const code = err?.code ?? err?.error?.code ?? '';
+      const isAndroidForegroundError = Platform.OS === 'android' && (
+        /foreground service cannot be started when the application is in the background/i.test(msg) ||
+        (/couldn't start the foreground service/i.test(msg) && /in the background/i.test(msg)) ||
+        code === 'ERR_FOREGROUND_SERVICE_START_NOT_ALLOWED' ||
+        /ERR_FOREGROUND_SERVICE_START_NOT_ALLOWED/i.test(msg)
+      );
+      if (isAndroidForegroundError) {
+        console.warn('[BackgroundLocationService] ⚠️ Android 前台服務無法啟動（已略過紅字）。請執行：npx expo prebuild --clean 後 npx expo run:android 重裝（app.json 已設 isAndroidForegroundServiceEnabled: false）');
+        this.isTracking = false;
+        return false;
+      }
       
-      // ⭐ 更詳細的錯誤信息（確保完整顯示）
-      if (error && typeof error === 'object') {
-        const err = error as any;
+      // ⭐ Android 前台服務錯誤：不再印任何紅字（訊息可能在 message 或 stack）
+      if (!isAndroidForegroundError) {
+        console.error('[BackgroundLocationService] ❌ 啟動背景位置追蹤失敗:');
+        console.error('[BackgroundLocationService] 錯誤詳情:', error);
+      }
+      
+      // ⭐ 更詳細的錯誤信息（確保完整顯示）；Android 前台服務錯誤已於上方 return
+      if (error && typeof error === 'object' && !isAndroidForegroundError) {
         
         // 完整輸出錯誤信息
         console.error('[BackgroundLocationService] ========== 錯誤詳情 ==========');
@@ -302,6 +320,11 @@ class BackgroundLocationService {
         // 如果有嵌套的錯誤訊息（Expo 錯誤通常有嵌套結構）
         if (err.message && typeof err.message === 'string') {
           const fullMessage = err.message;
+          if (Platform.OS === 'android' && /foreground service/i.test(fullMessage) && /in the background/i.test(fullMessage)) {
+            console.warn('[BackgroundLocationService] ⚠️ Android 前台服務無法啟動（已略過紅字）。請執行：npx expo prebuild --clean 後 npx expo run:android 重裝');
+            this.isTracking = false;
+            return false;
+          }
           console.error('[BackgroundLocationService] 完整錯誤訊息:', fullMessage);
           
           // 檢查是否包含 UIBackgroundModes 相關錯誤
@@ -329,14 +352,26 @@ class BackgroundLocationService {
               '請在「設定」>「隱私權與安全性」>「定位服務」>「Solefood MVP」中選擇「總是允許」。',
               [{ text: '確定' }]
             );
+          } else if (err.code === 'ERR_FOREGROUND_SERVICE_START_NOT_ALLOWED') {
+            console.error('[BackgroundLocationService] 💡 Android: 系統不允許啟動前台服務，請在設定中將位置權限改為「一律允許」');
+            if (Platform.OS === 'android') {
+              Alert.alert(
+                '背景追蹤需要權限',
+                '請在「設定」>「應用程式」>「Solefood MVP」>「權限」中，將位置改為「一律允許」，以啟用背景追蹤。\n\n若僅需在 App 開啟時記錄，可忽略此訊息。',
+                [{ text: '確定' }]
+              );
+            }
           } else if (fullMessage.includes('task') || fullMessage.includes('Task')) {
             console.error('[BackgroundLocationService] 💡 解決方案: 請確認 LocationTask.ts 已在 app/_layout.tsx 中導入');
           }
         }
         
-        // 輸出錯誤堆疊（如果有）
+        // 輸出錯誤堆疊（如果有）；Android 前台服務錯誤不再印紅字
         if (err.stack) {
-          console.error('[BackgroundLocationService] 錯誤堆疊:', err.stack);
+          const stackHasForegroundError = Platform.OS === 'android' && /foreground service/i.test(err.stack) && /in the background/i.test(err.stack);
+          if (!stackHasForegroundError) {
+            console.error('[BackgroundLocationService] 錯誤堆疊:', err.stack);
+          }
         }
       } else if (error instanceof Error) {
         console.error('[BackgroundLocationService] 錯誤訊息:', error.message);

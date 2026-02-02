@@ -16,7 +16,7 @@
           "locationWhenInUsePermission": "為了記錄您的 GPS 軌跡和探索地圖，我們需要位置權限。",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "isAndroidForegroundServiceEnabled": false
         }
       ],
       [

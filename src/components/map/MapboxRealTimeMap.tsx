@@ -28,6 +28,7 @@ import { calculateDistanceMeters } from '../../utils/geo';
 
 const TOOLTIP_CAMERA_ICON = require('../../../assets/images/camera_icon.png');
 const TOOLTIP_UNLOAD_ICON = require('../../../assets/images/unload_icon.png');
+const SEVEN_ELEVEN_ICON = require('../../../assets/images/seven_eleven_icon.png');
 
 // ⚠️ 重要：設置 Mapbox Access Token
 // 請在 src/config/mapbox.ts 中設置你的 token
@@ -114,6 +115,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const previousHeadingsRef = useRef<number[]>([]); // 歷史方向數據（用於平均）
   const lastValidHeadingRef = useRef<number>(0); // 上次有效方向
   const stationaryCountRef = useRef<number>(0); // 靜止計數器
+  
+  // ✅ Android 修復：用於基於位置計算方向
+  const previousLocationRef = useRef<Location.LocationObject | null>(null);
   
   // ✅ 老 Android 設備性能優化
   const [performanceLevel, setPerformanceLevel] = useState<'high' | 'medium' | 'low'>('high');
@@ -211,10 +215,24 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
 
   // 實際地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
-  const SPEED_THRESHOLD = 0.5; // m/s，低於此速度視為靜止
+  // ✅ Android 特定：降低速度閾值，更容易捕捉到移動
+  const SPEED_THRESHOLD = Platform.OS === 'android' ? 0.3 : 0.5; // m/s，Android 降低閾值
   const MIN_HEADING_CHANGE = 15; // 度，靜止時最小方向變化閾值（小於此值視為噪音）
   const HEADING_SMOOTH_WINDOW = 5; // 平滑窗口：取最近 5 次方向的平均值
   const STATIONARY_LOCK_COUNT = 10; // 靜止鎖定：連續 10 次靜止後，完全鎖定方向
+  
+  // ✅ Android 修復：計算兩個位置點之間的方向
+  const calculateHeadingFromPositions = useCallback((prevLoc: Location.LocationObject, currLoc: Location.LocationObject): number => {
+    const deltaLon = currLoc.coords.longitude - prevLoc.coords.longitude;
+    const deltaLat = currLoc.coords.latitude - prevLoc.coords.latitude;
+    
+    // 使用 atan2 計算方位角（弧度）
+    const headingRad = Math.atan2(deltaLon, deltaLat);
+    // 轉換為度數（0-360）
+    const headingDeg = (headingRad * 180 / Math.PI + 360) % 360;
+    
+    return headingDeg;
+  }, []);
   
   const currentSpeed = currentLocation?.coords?.speed ?? 0;
   const isMoving = currentSpeed !== null && currentSpeed > SPEED_THRESHOLD;
@@ -392,27 +410,54 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             // ✅ 調試：記錄每次位置更新（用於驗證 GPX 是否正常工作）
             if (__DEV__) {
               console.log('[Location Update] 📍 位置更新:', {
+                platform: Platform.OS,
                 lat: location.coords.latitude.toFixed(6),
                 lon: location.coords.longitude.toFixed(6),
                 accuracy: location.coords.accuracy?.toFixed(1) + 'm',
                 speed: location.coords.speed?.toFixed(2) + 'm/s',
+                heading: location.coords.heading,
                 timestamp: new Date(location.timestamp).toLocaleTimeString(),
               });
             }
             
-            // ✅ 使用 GPS 提供的運動方向（heading）僅在移動時更新
-            if (
-              location.coords.speed !== null &&
-              location.coords.speed > SPEED_THRESHOLD &&
-              location.coords.heading !== null &&
-              location.coords.heading !== undefined &&
-              location.coords.heading >= 0
-            ) {
-              console.log('[Heading] 🏃 移動中，更新運動方向:', location.coords.heading, '°, 速度:', location.coords.speed.toFixed(2), 'm/s');
-              setMovementHeading(location.coords.heading);
+            // ✅ Android 修復：優先使用位置計算方向，GPS heading 作為 fallback
+            if (location.coords.speed !== null && location.coords.speed > SPEED_THRESHOLD) {
+              let calculatedHeading: number | null = null;
+              
+              // Android：優先用位置計算方向（更可靠，中階手機 GPS heading 不準）
+              if (Platform.OS === 'android') {
+                console.log('[Heading] 🔍 Android 偵測: 進入位置計算邏輯, hasPrevious:', !!previousLocationRef.current);
+                if (previousLocationRef.current) {
+                  const timeDiff = location.timestamp - previousLocationRef.current.timestamp;
+                  const distanceLat = Math.abs(location.coords.latitude - previousLocationRef.current.coords.latitude);
+                  const distanceLon = Math.abs(location.coords.longitude - previousLocationRef.current.coords.longitude);
+                  const hasMovedEnough = distanceLat > 0.000001 || distanceLon > 0.000001; // 約 0.1 公尺
+                  
+                  // 只要有足夠位移就計算（不限時間差，確保每次都能算）
+                  if (hasMovedEnough) {
+                    calculatedHeading = calculateHeadingFromPositions(previousLocationRef.current, location);
+                    console.log('[Heading] 🤖 Android: 用位置計算方向:', calculatedHeading.toFixed(1), '°, 位移:', (distanceLat + distanceLon).toFixed(7), ', 時間差:', timeDiff, 'ms');
+                    setMovementHeading(calculatedHeading);
+                  } else {
+                    console.log('[Heading] ⏸️ Android: 位移過小，保持前次方向');
+                  }
+                } else {
+                  console.log('[Heading] 🔄 Android: 首次位置，等待下一個點以計算方向');
+                }
+              }
+              
+              // iOS 或 Android 首次／無位移時：使用 GPS heading
+              if (!calculatedHeading && location.coords.heading !== null && location.coords.heading !== undefined && location.coords.heading >= 0) {
+                const platform = Platform.OS === 'android' ? '(fallback)' : '';
+                console.log(`[Heading] 📡 使用 GPS heading ${platform}:`, location.coords.heading.toFixed(1), '°, 速度:', location.coords.speed.toFixed(2), 'm/s');
+                setMovementHeading(location.coords.heading);
+              }
             } else if (location.coords.speed !== null && location.coords.speed <= SPEED_THRESHOLD) {
               console.log('[Heading] 🛑 靜止中，速度:', location.coords.speed.toFixed(2), 'm/s');
             }
+            
+            // 保存當前位置供下次計算使用
+            previousLocationRef.current = location;
             
             // 如果正在採集，記錄到 GPS 歷史
             if (isCollecting && gpsHistoryService.isSessionActive()) {
@@ -1135,9 +1180,18 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const modelRotationValue = useMemo(() => {
     // 根據平台應用不同的偏移量（iOS 和 Android 傳感器坐標系統不同）
     // iOS: 推車正確，保持 -180
-    // Android: 推車需要順時針轉10度，從 -65 改為 -55
-    const platformOffset = Platform.OS === 'ios' ? -180 : -55;
+    // Android: 使用計算方向後，調整為 -90（指向移動方向）
+    const platformOffset = Platform.OS === 'ios' ? -180 : -90;
     const yaw = ((displayHeading + platformOffset) + 360) % 360;
+    
+    if (Platform.OS === 'android' && __DEV__) {
+      console.log('[Android Heading Debug] 🎯', {
+        displayHeading: displayHeading.toFixed(1),
+        platformOffset,
+        finalYaw: yaw.toFixed(1)
+      });
+    }
+    
     return [0, 0, yaw]; // [pitch, roll, yaw]
   }, [displayHeading]);
 
@@ -1233,9 +1287,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           }
         />
 
-        {/* ✅ 餐廳圖標：必須在 MapView 層級提前註冊，SymbolLayer 才能顯示圖標（只註冊文字會只顯示文字） */}
-        <Mapbox.Images 
-          nativeAssetImages={['seven_eleven_icon']}
+        {/* ✅ 餐廳圖標：用 images 傳入 require()，iOS/Android 皆可用（nativeAssetImages 在 Android 需原生 drawable） */}
+        <Mapbox.Images
+          images={{ seven_eleven_icon: SEVEN_ELEVEN_ICON }}
           onImageMissing={(imageKey) => {
             console.error('[Mapbox] ❌ 圖標遺失:', imageKey);
           }}
@@ -1382,18 +1436,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             ? [currentLocation!.coords.longitude, currentLocation!.coords.latitude]
             : [0, 0];
 
-          console.log('[MapboxRealTimeMap] 🎨 渲染 User Marker 圖層:', {
-            layerId: 'user-marker-top',
-            symbolSortKey: 99999,
-            shouldShow,
-            hasLocation,
-            coords,
-            timeTheme,
-          });
-
           return (
             <Mapbox.ShapeSource
-              key={`user-location-source-${coords[0]}-${coords[1]}`}
+              key="user-location-source"
               id="user-location-source"
               shape={{
                 type: 'Feature',
@@ -1423,7 +1468,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
                 textOpacity: shouldShow ? 0.7 : 0,
                 textPitchAlignment: 'map',
                 textRotationAlignment: 'map',
-                textRotate: displayHeading + (Platform.OS === 'ios' ? -90 : -150 + 180), // iOS箭頭需要-90，Android箭頭需要30（-150再轉180度）
+                textRotate: displayHeading - 90, // 箭頭符號➤朝右，減90度讓它朝上（北），iOS/Android 統一
                 textAllowOverlap: true,
                 textIgnorePlacement: true,
                 symbolZOrder: 'viewport-y',
@@ -1437,7 +1482,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 + 性能優化 */}
         {userModelGeoJson && is3DModelReady && isCollecting && performanceSettings.enable3DModel && (
           <Mapbox.ShapeSource 
-            key={`user-3d-model-source-${currentLocation?.coords?.longitude ?? 0}-${currentLocation?.coords?.latitude ?? 0}`}
+            key="user-3d-model-source"
             id="user-3d-model-source" 
             shape={userModelGeoJson}
             onPress={(e) => {

@@ -161,7 +161,7 @@ export function UnloadModal({
                       </View>
                       <View style={styles.squareStaminaRow}>
                         <Image source={STAMINA_ICON} style={styles.squareStaminaIcon} resizeMode="contain" />
-                        <Text style={styles.staminaFree}>+{picnicRecover}</Text>
+                        <Text style={styles.staminaFree}>+{Math.round(picnicRecover)}</Text>
                       </View>
                     </View>
                   </Pressable>

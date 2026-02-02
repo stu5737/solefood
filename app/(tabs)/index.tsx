@@ -535,8 +535,21 @@ export default function GameScreenV9Plus() {
     showFloatingText('📍 重新定位', '#2196F3');
   };
 
-  /** 靠近餐廳時：開啟相機（卸貨證明／打卡）；模擬器不支援時改為友善提示 */
+  /** 靠近餐廳時：開啟相機（卸貨證明／打卡）；須在 20m 內，與 1x／2x／10x 同一設定 */
   const handleNearRestaurantCamera = async () => {
+    const dist =
+      userLocation &&
+      selectedRestaurantForUnload &&
+      calculateDistanceMeters(
+        userLocation.latitude,
+        userLocation.longitude,
+        selectedRestaurantForUnload.coord[1],
+        selectedRestaurantForUnload.coord[0]
+      );
+    if (dist == null || dist > NEAR_RESTAURANT_RADIUS_M) {
+      showFloatingText('請靠近餐廳 20m 內再使用相機', '#FF9800');
+      return;
+    }
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -609,8 +622,8 @@ export default function GameScreenV9Plus() {
                         selectedRestaurantForUnload.coord[1],
                         selectedRestaurantForUnload.coord[0]
                       );
-                    if (dist != null && dist > NEAR_RESTAURANT_RADIUS_M) {
-                      showFloatingText('請靠近餐廳後再卸貨', '#FF9800');
+                    if (dist == null || dist > NEAR_RESTAURANT_RADIUS_M) {
+                      showFloatingText('請靠近餐廳 20m 內再卸貨（1x／2x／10x）', '#FF9800');
                       return;
                     }
                     setUnloadModalSource('restaurant');
@@ -646,18 +659,6 @@ export default function GameScreenV9Plus() {
             balance={balance}
           />
         </View>
-      )}
-
-      {/* ========== 非 IDLE（採集中）：左上角僅頭像 HUD ========== */}
-      {isReady && !showHistoryTrail && !showDevDashboard && gameState !== 'IDLE' && (
-        <UserProfileHUD
-          totalDistanceKm={
-            allSessions.reduce((acc, s) => acc + s.totalDistance, 0) +
-            (gameState === 'COLLECTING' ? currentDistance : 0)
-          }
-          notificationCount={0}
-          onPress={() => setProfileModalVisible(true)}
-        />
       )}
 
       {/* ========== 頂部 HUD - 321 倒數完成後才顯示 ========== */}
@@ -741,14 +742,15 @@ export default function GameScreenV9Plus() {
             }
             const dist =
               userLocation &&
+              selectedRestaurantForUnload &&
               calculateDistanceMeters(
                 userLocation.latitude,
                 userLocation.longitude,
                 selectedRestaurantForUnload.coord[1],
                 selectedRestaurantForUnload.coord[0]
               );
-            if (dist != null && dist > NEAR_RESTAURANT_RADIUS_M) {
-              showFloatingText('請靠近餐廳後再卸貨', '#FF9800');
+            if (dist == null || dist > NEAR_RESTAURANT_RADIUS_M) {
+              showFloatingText('請靠近餐廳 20m 內再卸貨（1x／2x／10x）', '#FF9800');
               return;
             }
             setUnloadModalSource('restaurant');
@@ -761,7 +763,16 @@ export default function GameScreenV9Plus() {
 
       {/* ========== 右下角：3D/2D 切換+回中央（Mapbox）、設置按鈕 ========== */}
       {isReady && !showHistoryTrail && !showDevDashboard && (
-        <View style={styles.settingsButtonContainer} pointerEvents="box-none">
+        <View
+          style={[
+            styles.settingsButtonContainer,
+            {
+              bottom: Math.max(16, insets.bottom) + 16,
+              right: Math.max(12, insets.right),
+            },
+          ]}
+          pointerEvents="box-none"
+        >
           {MAP_ENGINE === 'mapbox' && (
           <TouchableOpacity
               style={[styles.settingsButton, styles.viewModeRecenterButton]}
