@@ -119,6 +119,13 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   // ✅ Android 修復：用於基於位置計算方向
   const previousLocationRef = useRef<Location.LocationObject | null>(null);
   
+  // ✅ Android 高速時 UserMarker 跟得上：ref + 定時 flush，避免 callback 阻塞導致卡死
+  const latestLocationRef = useRef<Location.LocationObject | null>(null);
+  const lastLocationFlushTsRef = useRef<number>(0);
+  const locationFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const locationLogCountRef = useRef(0);
+  const userModelLogCountRef = useRef(0);
+  
   // ✅ 老 Android 設備性能優化
   const [performanceLevel, setPerformanceLevel] = useState<'high' | 'medium' | 'low'>('high');
   
@@ -383,6 +390,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         }
 
         setCurrentLocation(initialLocation);
+        latestLocationRef.current = initialLocation;
+        lastLocationFlushTsRef.current = initialLocation.timestamp;
         
         // 設置初始運動方向（只有有效值才更新）
         if (initialLocation.coords.heading !== null && initialLocation.coords.heading !== undefined && initialLocation.coords.heading >= 0) {
@@ -396,70 +405,44 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         });
 
         // 位置追蹤
-        // ✅ 調整配置以適配 GPX 文件：distanceInterval 設為 0 表示不限制距離，只按時間更新
-        // 這樣可以確保 GPX 文件中的每個點都能被正確接收
+        // ✅ Android 高速時跟得上：更短 timeInterval（500ms）+ callback 只寫 ref，由定時 flush 更新 UI
+        const watchTimeInterval = Platform.OS === 'android' ? 500 : 1000;
         subscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 1000, // 每 1 秒檢查一次位置
-            distanceInterval: 0, // ✅ 改為 0：不限制距離，確保 GPX 點之間距離較遠時也能更新
+            timeInterval: watchTimeInterval,
+            distanceInterval: 0,
           },
           (location) => {
-            setCurrentLocation(location);
+            // ✅ 先寫入 ref，不直接 setState，避免高速時 callback 阻塞導致卡死
+            latestLocationRef.current = location;
             
-            // ✅ 調試：記錄每次位置更新（用於驗證 GPX 是否正常工作）
+            // ✅ 調試日誌改為每 5 次印一次，減少 JS 線程負擔（高速時 log 會拖垮中階機）
             if (__DEV__) {
-              console.log('[Location Update] 📍 位置更新:', {
-                platform: Platform.OS,
-                lat: location.coords.latitude.toFixed(6),
-                lon: location.coords.longitude.toFixed(6),
-                accuracy: location.coords.accuracy?.toFixed(1) + 'm',
-                speed: location.coords.speed?.toFixed(2) + 'm/s',
-                heading: location.coords.heading,
-                timestamp: new Date(location.timestamp).toLocaleTimeString(),
-              });
+              locationLogCountRef.current += 1;
+              if (locationLogCountRef.current % 5 === 1) {
+                console.log('[Location Update] 📍', Platform.OS, location.coords.speed?.toFixed(1) + 'm/s', location.coords.latitude.toFixed(5), location.coords.longitude.toFixed(5));
+              }
             }
             
-            // ✅ Android 修復：優先使用位置計算方向，GPS heading 作為 fallback
+            // ✅ Android 修復：優先使用位置計算方向
             if (location.coords.speed !== null && location.coords.speed > SPEED_THRESHOLD) {
               let calculatedHeading: number | null = null;
-              
-              // Android：優先用位置計算方向（更可靠，中階手機 GPS heading 不準）
-              if (Platform.OS === 'android') {
-                console.log('[Heading] 🔍 Android 偵測: 進入位置計算邏輯, hasPrevious:', !!previousLocationRef.current);
-                if (previousLocationRef.current) {
-                  const timeDiff = location.timestamp - previousLocationRef.current.timestamp;
-                  const distanceLat = Math.abs(location.coords.latitude - previousLocationRef.current.coords.latitude);
-                  const distanceLon = Math.abs(location.coords.longitude - previousLocationRef.current.coords.longitude);
-                  const hasMovedEnough = distanceLat > 0.000001 || distanceLon > 0.000001; // 約 0.1 公尺
-                  
-                  // 只要有足夠位移就計算（不限時間差，確保每次都能算）
-                  if (hasMovedEnough) {
-                    calculatedHeading = calculateHeadingFromPositions(previousLocationRef.current, location);
-                    console.log('[Heading] 🤖 Android: 用位置計算方向:', calculatedHeading.toFixed(1), '°, 位移:', (distanceLat + distanceLon).toFixed(7), ', 時間差:', timeDiff, 'ms');
-                    setMovementHeading(calculatedHeading);
-                  } else {
-                    console.log('[Heading] ⏸️ Android: 位移過小，保持前次方向');
-                  }
-                } else {
-                  console.log('[Heading] 🔄 Android: 首次位置，等待下一個點以計算方向');
+              if (Platform.OS === 'android' && previousLocationRef.current) {
+                const distanceLat = Math.abs(location.coords.latitude - previousLocationRef.current.coords.latitude);
+                const distanceLon = Math.abs(location.coords.longitude - previousLocationRef.current.coords.longitude);
+                const hasMovedEnough = distanceLat > 0.000001 || distanceLon > 0.000001;
+                if (hasMovedEnough) {
+                  calculatedHeading = calculateHeadingFromPositions(previousLocationRef.current, location);
+                  setMovementHeading(calculatedHeading);
                 }
               }
-              
-              // iOS 或 Android 首次／無位移時：使用 GPS heading
-              if (!calculatedHeading && location.coords.heading !== null && location.coords.heading !== undefined && location.coords.heading >= 0) {
-                const platform = Platform.OS === 'android' ? '(fallback)' : '';
-                console.log(`[Heading] 📡 使用 GPS heading ${platform}:`, location.coords.heading.toFixed(1), '°, 速度:', location.coords.speed.toFixed(2), 'm/s');
+              if (!calculatedHeading && location.coords.heading != null && location.coords.heading >= 0) {
                 setMovementHeading(location.coords.heading);
               }
-            } else if (location.coords.speed !== null && location.coords.speed <= SPEED_THRESHOLD) {
-              console.log('[Heading] 🛑 靜止中，速度:', location.coords.speed.toFixed(2), 'm/s');
             }
-            
-            // 保存當前位置供下次計算使用
             previousLocationRef.current = location;
             
-            // 如果正在採集，記錄到 GPS 歷史
             if (isCollecting && gpsHistoryService.isSessionActive()) {
               gpsHistoryService.addPoint({
                 latitude: location.coords.latitude,
@@ -472,6 +455,15 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             }
           }
         );
+        
+        // ✅ 定時把 ref 的座標 flush 到 state（約 10 次/秒），UserMarker 才跟得上且不卡死
+        const FLUSH_MS = Platform.OS === 'android' ? 80 : 100;
+        locationFlushIntervalRef.current = setInterval(() => {
+          const latest = latestLocationRef.current;
+          if (!latest || latest.timestamp === lastLocationFlushTsRef.current) return;
+          lastLocationFlushTsRef.current = latest.timestamp;
+          setCurrentLocation(latest);
+        }, FLUSH_MS);
 
         // 羅盤方向追蹤（靜止時使用）
         headingSubscription = await Location.watchHeadingAsync((headingData) => {
@@ -554,6 +546,10 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     return () => {
       if (retryTimeout) {
         clearTimeout(retryTimeout);
+      }
+      if (locationFlushIntervalRef.current) {
+        clearInterval(locationFlushIntervalRef.current);
+        locationFlushIntervalRef.current = null;
       }
       if (subscription) {
         subscription.remove();
@@ -1166,13 +1162,12 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       }],
     };
     
-    console.log('[3D Model] ✅ userModelGeoJson 生成:', {
-      coordinates: geoJson.features[0].geometry.coordinates,
-      rotation: geoJson.features[0].properties.rotation,
-      speed: geoJson.features[0].properties.speed,
-      isTestMode: !currentLocation,
-    });
-    
+    if (__DEV__) {
+      const n = (userModelLogCountRef.current += 1);
+      if (n % 10 === 1) {
+        console.log('[3D Model] userModelGeoJson', geoJson.features[0].geometry.coordinates, 'rot', geoJson.features[0].properties.rotation);
+      }
+    }
     return geoJson;
   }, [currentLocation, actualMapMode, is3DModelReady, displayHeadingAdjusted, currentSpeed]);
 
@@ -1180,18 +1175,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const modelRotationValue = useMemo(() => {
     // 根據平台應用不同的偏移量（iOS 和 Android 傳感器坐標系統不同）
     // iOS: 推車正確，保持 -180
-    // Android: 使用計算方向後，調整為 -90（指向移動方向）
-    const platformOffset = Platform.OS === 'ios' ? -180 : -90;
+    // Android: 使用計算方向後，調整為 -180（手推車模型逆時鐘旋轉 90 度以指向 12 點鐘方向）
+    const platformOffset = -180; // iOS 和 Android 統一使用 -180
     const yaw = ((displayHeading + platformOffset) + 360) % 360;
-    
-    if (Platform.OS === 'android' && __DEV__) {
-      console.log('[Android Heading Debug] 🎯', {
-        displayHeading: displayHeading.toFixed(1),
-        platformOffset,
-        finalYaw: yaw.toFixed(1)
-      });
-    }
-    
     return [0, 0, yaw]; // [pitch, roll, yaw]
   }, [displayHeading]);
 
@@ -1627,30 +1613,48 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         })()}
 
         {/* 選中餐廳時：tooltip 浮在圖標上方，錨點在圖標下方一點，與圖標保持間隔不壓住 */}
-        {selectedRestaurantForUnload && isCollecting && actualMapMode === 'GAME' && onUnload && onCamera && onCloseRestaurant && (
-          <Mapbox.MarkerView
-            coordinate={[
-              selectedRestaurantForUnload.coord[0],
-              selectedRestaurantForUnload.coord[1] + 0.00018,
-            ]}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <View style={floatingUnloadStyles.tooltipWrap} pointerEvents="box-none">
-              <View style={floatingUnloadStyles.tooltipCard}>
-                <View style={floatingUnloadStyles.actions}>
-                  <TouchableOpacity style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnCamera]} onPress={onCamera} activeOpacity={0.85}>
-                    <Image source={TOOLTIP_CAMERA_ICON} style={floatingUnloadStyles.btnIcon} resizeMode="contain" />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnUnload]} onPress={onUnload} activeOpacity={0.85}>
-                    <Image source={TOOLTIP_UNLOAD_ICON} style={floatingUnloadStyles.btnIconUnload} resizeMode="contain" />
-                  </TouchableOpacity>
+        {selectedRestaurantForUnload && isCollecting && actualMapMode === 'GAME' && onUnload && onCamera && onCloseRestaurant && (() => {
+          // Android 與 iOS 座標偏移可能不同，Android 需微調使 tooltip 對齊圖標正上方
+          const latOffset = Platform.OS === 'android' ? 0.00022 : 0.00018;
+          const lngOffset = Platform.OS === 'android' ? 0 : 0;
+          const tooltipCoord: [number, number] = [
+            selectedRestaurantForUnload.coord[0] + lngOffset,
+            selectedRestaurantForUnload.coord[1] + latOffset,
+          ];
+          const hitSlop = Platform.OS === 'android' ? { top: 16, bottom: 16, left: 16, right: 16 } : undefined;
+          return (
+            <Mapbox.MarkerView
+              coordinate={tooltipCoord}
+              anchor={{ x: 0.5, y: 1 }}
+              allowOverlap
+            >
+              <View style={floatingUnloadStyles.tooltipWrap} pointerEvents="auto">
+                <View style={floatingUnloadStyles.tooltipCard}>
+                  <View style={floatingUnloadStyles.actions}>
+                    <TouchableOpacity
+                      style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnCamera]}
+                      onPress={onCamera}
+                      activeOpacity={0.85}
+                      hitSlop={hitSlop}
+                    >
+                      <Image source={TOOLTIP_CAMERA_ICON} style={floatingUnloadStyles.btnIcon} resizeMode="contain" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[floatingUnloadStyles.btn, floatingUnloadStyles.btnUnload]}
+                      onPress={onUnload}
+                      activeOpacity={0.85}
+                      hitSlop={hitSlop}
+                    >
+                      <Image source={TOOLTIP_UNLOAD_ICON} style={floatingUnloadStyles.btnIconUnload} resizeMode="contain" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
+                <View style={floatingUnloadStyles.tooltipTail} />
+                <View style={floatingUnloadStyles.tooltipGap} />
               </View>
-              <View style={floatingUnloadStyles.tooltipTail} />
-              <View style={floatingUnloadStyles.tooltipGap} />
-            </View>
-          </Mapbox.MarkerView>
-        )}
+            </Mapbox.MarkerView>
+          );
+        })()}
       </Mapbox.MapView>
 
       {/* 🎬 倒數動畫（3-2-1）- 採集開始時顯示 */}

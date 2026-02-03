@@ -10,7 +10,7 @@ interface SpeedIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
+export const SpeedIcon: React.FC<SpeedIconProps> = React.memo(({ size = 36 }) => {
   const imageSource = require('../../../assets/images/speed_icon.png');
   
   return (
@@ -23,7 +23,7 @@ export const SpeedIcon: React.FC<SpeedIconProps> = ({ size = 36 }) => {
       }}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   icon: {

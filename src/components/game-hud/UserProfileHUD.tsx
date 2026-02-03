@@ -22,7 +22,7 @@ export interface UserProfileHUDProps {
 
 const DEFAULT_AVATAR = require('../../../assets/images/useravator_icon.png');
 
-export const UserProfileHUD: React.FC<UserProfileHUDProps> = ({
+export const UserProfileHUD: React.FC<UserProfileHUDProps> = React.memo(({
   totalDistanceKm,
   notificationCount = 0,
   avatarSource,
@@ -71,7 +71,12 @@ export const UserProfileHUD: React.FC<UserProfileHUDProps> = ({
       {content}
     </Pressable>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ 距離/通知數不變時不重繪
+  return prevProps.totalDistanceKm === nextProps.totalDistanceKm
+    && prevProps.notificationCount === nextProps.notificationCount
+    && prevProps.embedded === nextProps.embedded;
+});
 
 const FRAME = 36;
 const AVATAR = 46; // 比圓框大，頭像超出圓框

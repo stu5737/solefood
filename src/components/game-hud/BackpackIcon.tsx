@@ -15,7 +15,7 @@ interface BackpackIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const BackpackIcon: React.FC<BackpackIconProps> = ({ size = 36 }) => {
+export const BackpackIcon: React.FC<BackpackIconProps> = React.memo(({ size = 36 }) => {
   // React Native 的 require() 在編譯時解析，如果圖片不存在會在構建時失敗
   // 這裡直接使用 require，如果圖片路徑錯誤會在構建時報錯
   const imageSource = require('../../../assets/images/backpack_icon.png');
@@ -30,7 +30,7 @@ export const BackpackIcon: React.FC<BackpackIconProps> = ({ size = 36 }) => {
       }}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

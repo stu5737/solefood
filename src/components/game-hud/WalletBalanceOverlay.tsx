@@ -13,7 +13,7 @@ interface WalletBalanceOverlayProps {
   balance?: number;
 }
 
-export const WalletBalanceOverlay: React.FC<WalletBalanceOverlayProps> = ({
+export const WalletBalanceOverlay: React.FC<WalletBalanceOverlayProps> = React.memo(({
   balance = 1250.0, // 硬編碼預設值，方便測試
 }) => {
   const insets = useSafeAreaInsets();
@@ -54,7 +54,10 @@ export const WalletBalanceOverlay: React.FC<WalletBalanceOverlayProps> = ({
       </View>
     </View>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ balance 不變時不重繪
+  return prevProps.balance === nextProps.balance;
+});
 
 const styles = StyleSheet.create({
   container: {

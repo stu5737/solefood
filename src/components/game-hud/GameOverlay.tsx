@@ -31,7 +31,7 @@ interface GameOverlayProps {
   actionIcon?: React.ReactNode;
 }
 
-export const GameOverlay: React.FC<GameOverlayProps> = ({
+export const GameOverlay: React.FC<GameOverlayProps> = React.memo(({
   stamina,
   maxStamina,
   currentWeight,
@@ -64,7 +64,14 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
       )}
     </View>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ 主要狀態不變時不重繪
+  return prevProps.stamina === nextProps.stamina
+    && prevProps.maxStamina === nextProps.maxStamina
+    && prevProps.currentWeight === nextProps.currentWeight
+    && prevProps.maxWeight === nextProps.maxWeight
+    && prevProps.actionState === nextProps.actionState;
+});
 
 const styles = StyleSheet.create({
   container: {

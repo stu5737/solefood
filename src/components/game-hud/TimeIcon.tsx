@@ -10,7 +10,7 @@ interface TimeIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const TimeIcon: React.FC<TimeIconProps> = ({ size = 36 }) => {
+export const TimeIcon: React.FC<TimeIconProps> = React.memo(({ size = 36 }) => {
   const imageSource = require('../../../assets/images/time_icon.png');
   
   return (
@@ -23,7 +23,7 @@ export const TimeIcon: React.FC<TimeIconProps> = ({ size = 36 }) => {
       }}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   icon: {

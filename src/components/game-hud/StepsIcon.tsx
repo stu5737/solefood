@@ -10,7 +10,7 @@ interface StepsIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const StepsIcon: React.FC<StepsIconProps> = ({ size = 36 }) => {
+export const StepsIcon: React.FC<StepsIconProps> = React.memo(({ size = 36 }) => {
   const imageSource = require('../../../assets/images/steps_icon.png');
   
   return (
@@ -23,7 +23,7 @@ export const StepsIcon: React.FC<StepsIconProps> = ({ size = 36 }) => {
       }}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   icon: {

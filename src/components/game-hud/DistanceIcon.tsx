@@ -10,7 +10,7 @@ interface DistanceIconProps {
   size?: number; // 圖標大小（預設 36）
 }
 
-export const DistanceIcon: React.FC<DistanceIconProps> = ({ size = 36 }) => {
+export const DistanceIcon: React.FC<DistanceIconProps> = React.memo(({ size = 36 }) => {
   const imageSource = require('../../../assets/images/distance_icon.png');
 
   return (
@@ -23,7 +23,7 @@ export const DistanceIcon: React.FC<DistanceIconProps> = ({ size = 36 }) => {
       }}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   icon: {

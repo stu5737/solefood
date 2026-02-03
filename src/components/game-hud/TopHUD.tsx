@@ -29,7 +29,7 @@ interface TopHUDProps {
   weightIcon?: React.ReactNode;
 }
 
-export const TopHUD: React.FC<TopHUDProps> = ({
+export const TopHUD: React.FC<TopHUDProps> = React.memo(({
   stamina,
   maxStamina,
   currentWeight,
@@ -123,7 +123,17 @@ export const TopHUD: React.FC<TopHUDProps> = ({
       </View>
     </View>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ 自訂比較：只有這些值變化才重繪（避免地圖更新時無謂重繪）
+  return prevProps.stamina === nextProps.stamina
+    && prevProps.maxStamina === nextProps.maxStamina
+    && prevProps.currentWeight === nextProps.currentWeight
+    && prevProps.maxWeight === nextProps.maxWeight
+    && prevProps.exerciseTime === nextProps.exerciseTime
+    && prevProps.speed === nextProps.speed
+    && prevProps.totalDistanceKm === nextProps.totalDistanceKm
+    && prevProps.steps === nextProps.steps;
+});
 
 const styles = StyleSheet.create({
   container: {

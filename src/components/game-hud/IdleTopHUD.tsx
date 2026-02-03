@@ -19,7 +19,7 @@ interface IdleTopHUDProps {
   embedded?: boolean;
 }
 
-export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
+export const IdleTopHUD: React.FC<IdleTopHUDProps> = React.memo(({
   stamina,
   maxStamina,
   balance = 1250.0,
@@ -105,7 +105,13 @@ export const IdleTopHUD: React.FC<IdleTopHUDProps> = ({
       {hudRow}
     </View>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ 自訂比較：stamina/balance 不變時不重繪
+  return prevProps.stamina === nextProps.stamina
+    && prevProps.maxStamina === nextProps.maxStamina
+    && prevProps.balance === nextProps.balance
+    && prevProps.embedded === nextProps.embedded;
+});
 
 const styles = StyleSheet.create({
   container: {
