@@ -372,15 +372,21 @@ export default function GameScreenV9Plus() {
    * 用於「靠近餐廳 → UnloadModal 確認後」或 handleUnload
    */
   const finishUnloadSession = async () => {
-    magnetSystem.stop();
-    bgTrackingNotification.stopTracking();
-    await backgroundLocationService.stopBackgroundTracking();
-    await gpsHistoryService.endSession('unload');
-    const sessions = gpsHistoryService.getAllSessions();
-    setAllSessions(sessions);
-    showFloatingText('💰 卸貨完成！', '#2196F3');
-    setSelectedRestaurantForUnload(null);
-    setGameState('IDLE');
+    try {
+      magnetSystem.stop();
+      bgTrackingNotification.stopTracking();
+      await backgroundLocationService.stopBackgroundTracking();
+      await gpsHistoryService.endSession('unload');
+      const sessions = gpsHistoryService.getAllSessions();
+      setAllSessions(sessions);
+      showFloatingText('💰 卸貨完成！', '#2196F3');
+      setSelectedRestaurantForUnload(null);
+      setGameState('IDLE');
+    } catch (e) {
+      console.warn('[GameScreen] finishUnloadSession 部分失敗（仍切回 IDLE）:', e);
+      setSelectedRestaurantForUnload(null);
+      setGameState('IDLE');
+    }
   };
 
   /**
@@ -391,28 +397,23 @@ export default function GameScreenV9Plus() {
 
     setGameState('PICNIC');
 
-    // 停止磁吸系統
-    magnetSystem.stop();
+    try {
+      magnetSystem.stop();
+      bgTrackingNotification.stopTracking();
+      await backgroundLocationService.stopBackgroundTracking();
+      await gpsHistoryService.endSession('picnic');
 
-    // 停止背景服務
-    bgTrackingNotification.stopTracking();
-    await backgroundLocationService.stopBackgroundTracking();
+      const sessions = gpsHistoryService.getAllSessions();
+      setAllSessions(sessions);
 
-    // 結束會話
-    await gpsHistoryService.endSession('picnic');
-
-    // 更新歷史會話
-    const sessions = gpsHistoryService.getAllSessions();
-    setAllSessions(sessions);
-
-    // 計算體力恢復（示例邏輯）
-    const recoveredStamina = Math.min(30, 100 - stamina);
-    usePlayerStore.getState().updateStamina(recoveredStamina);
-
-    showFloatingText(`+${recoveredStamina} ⚡`, '#4CAF50');
-
-    // 重置狀態
-    setGameState('IDLE');
+      const recoveredStamina = Math.min(30, 100 - stamina);
+      usePlayerStore.getState().updateStamina(recoveredStamina);
+      showFloatingText(`+${recoveredStamina} ⚡`, '#4CAF50');
+    } catch (e) {
+      console.warn('[GameScreen] handlePicnic 部分失敗:', e);
+    } finally {
+      setGameState('IDLE');
+    }
   };
 
   // ========== 磁吸系統回調 ==========
@@ -831,11 +832,15 @@ export default function GameScreenV9Plus() {
         unloadSource={unloadModalSource}
         isGoldenMistNode={true}
         onClose={() => setUnloadModalVisible(false)}
-        onSuccess={(revenue) => {
+        onSuccess={async (revenue) => {
           usePlayerStore.getState().addBalance(revenue);
           setUnloadModalVisible(false);
           setSelectedRestaurantForUnload(null);
-          finishUnloadSession();
+          try {
+            await finishUnloadSession();
+          } catch (e) {
+            console.warn('[GameScreen] 卸貨收尾失敗:', e);
+          }
         }}
         onPicnic={() => {
           setUnloadModalVisible(false);

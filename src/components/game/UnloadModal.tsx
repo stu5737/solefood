@@ -13,7 +13,10 @@ import {
   Pressable,
   ActivityIndicator,
   Image,
+  Platform,
+  Dimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useInventoryStore } from '../../stores/inventoryStore';
 import { executeUnloadSettlement, calculateSettlement } from '../../core/game/unloading';
@@ -58,9 +61,19 @@ export function UnloadModal({
 }: UnloadModalProps) {
   const [selectedMode, setSelectedMode] = useState<PayoutMode | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const insets = useSafeAreaInsets();
   const playerState = usePlayerStore();
   const inventoryStore = useInventoryStore();
   const stamina = playerState.stamina;
+
+  // Android 專用：避免爆框／超過底框，安全區域 + 整體縮小 90% 塞進螢幕
+  const windowWidth = Dimensions.get('window').width;
+  const horizontalPadding = Platform.OS === 'android' ? Math.max(20, insets.left, insets.right) : 20;
+  const bottomPadding = Platform.OS === 'android' ? Math.max(20, insets.bottom) : 20;
+  const maxCardWidth = Platform.OS === 'android' ? Math.min(400, windowWidth - 2 * horizontalPadding) : 400;
+  const isNarrow = Platform.OS === 'android' && maxCardWidth < 360;
+  const btnSize = Platform.OS === 'android' ? (isNarrow ? 90 : 106) : (isNarrow ? 100 : 118);
+  const rowGap = Platform.OS === 'android' ? (isNarrow ? 7 : 10) : (isNarrow ? 8 : 12);
   const maxStamina = playerState.maxStamina;
   const picnicRecover = Math.min(30, maxStamina - stamina);
 
@@ -110,6 +123,10 @@ export function UnloadModal({
 
   if (items.length === 0) return null;
 
+  const androidOptionColStyle = Platform.OS === 'android' ? { width: btnSize } : {};
+  const androidSquareBtnStyle = Platform.OS === 'android' ? { width: btnSize, height: btnSize } : {};
+  const androidMultiplierStyle = Platform.OS === 'android' ? { marginBottom: 5 } : {};
+
   return (
     <Modal
       visible={visible}
@@ -117,9 +134,30 @@ export function UnloadModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.centered} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.topRow}>
+      <Pressable
+        style={[
+          styles.overlay,
+          Platform.OS === 'android' && {
+            paddingLeft: horizontalPadding,
+            paddingRight: horizontalPadding,
+            paddingTop: Math.max(20, insets.top),
+            paddingBottom: bottomPadding,
+          },
+        ]}
+        onPress={onClose}
+      >
+        <Pressable
+          style={[
+            styles.centered,
+            Platform.OS === 'android' && {
+              maxWidth: maxCardWidth,
+              paddingVertical: 16,
+              paddingHorizontal: 16,
+            },
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={[styles.topRow, Platform.OS === 'android' && { marginBottom: 10 }]}>
             <Text style={styles.header}>
               📦 {itemCount} Items  ·  ⚖️ {totalWeight.toFixed(1)}kg
             </Text>
@@ -133,18 +171,19 @@ export function UnloadModal({
             </Pressable>
           </View>
 
-          {/* 兩按鈕與三按鈕：同一按鈕尺寸、設計一致（折衷 118px） */}
-          <View style={styles.row}>
+          {/* 兩按鈕與三按鈕：同一按鈕尺寸、設計一致（折衷 118px）；Android 窄螢幕縮小避免爆框 */}
+          <View style={[styles.row, Platform.OS === 'android' && { gap: rowGap, marginBottom: 10 }]}>
             {unloadSource === 'anywhere' ? (
               <>
                 {/* 1. 就地野餐（0x） */}
-                <View style={styles.optionCol}>
-                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual]}>
+                <View style={[styles.optionCol, androidOptionColStyle]}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual, androidMultiplierStyle]}>
                     <Text style={styles.multiplierTextDark}>0x</Text>
                   </View>
                   <Pressable
                     style={({ pressed }) => [
                       styles.squareBtn,
+                      androidSquareBtnStyle,
                       styles.cardBase,
                       pressed && styles.squareBtnPressed,
                     ]}
@@ -167,14 +206,15 @@ export function UnloadModal({
                   </Pressable>
                 </View>
                 {/* 2. 看影片叫貨車（1.5x） */}
-                <View style={styles.optionCol}>
-                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter]}>
+                <View style={[styles.optionCol, androidOptionColStyle]}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter, androidMultiplierStyle]}>
                     <Image source={AD_ICON} style={styles.multiplierBadgeIcon} resizeMode="contain" />
                     <Text style={styles.multiplierTextDark}>{porterMultiplier}x</Text>
                   </View>
                   <Pressable
                     style={({ pressed }) => [
                       styles.squareBtn,
+                      androidSquareBtnStyle,
                       styles.cardBase,
                       pressed && styles.squareBtnPressed,
                     ]}
@@ -204,13 +244,14 @@ export function UnloadModal({
             ) : (
               <>
                 {/* 餐廳卸貨：1. 自己搬（1x） */}
-                <View style={styles.optionCol}>
-                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual]}>
+                <View style={[styles.optionCol, androidOptionColStyle]}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveManual, androidMultiplierStyle]}>
                     <Text style={styles.multiplierTextDark}>{PAYOUT_MATRIX.NORMAL}x</Text>
                   </View>
                   <Pressable
                     style={({ pressed }) => [
                       styles.squareBtn,
+                      androidSquareBtnStyle,
                       styles.cardBase,
                       !canUnloadNormal && styles.cardDisabled,
                       pressed && styles.squareBtnPressed,
@@ -238,14 +279,15 @@ export function UnloadModal({
                   </Pressable>
                 </View>
                 {/* 2. 按廣告卸貨（2x）- 餐廳用 handtruck_icon */}
-                <View style={styles.optionCol}>
-                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter]}>
+                <View style={[styles.optionCol, androidOptionColStyle]}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAbovePorter, androidMultiplierStyle]}>
                     <Image source={AD_ICON} style={styles.multiplierBadgeIcon} resizeMode="contain" />
                     <Text style={styles.multiplierTextDark}>{porterMultiplier}x</Text>
                   </View>
                   <Pressable
                     style={({ pressed }) => [
                       styles.squareBtn,
+                      androidSquareBtnStyle,
                       styles.cardBase,
                       pressed && styles.squareBtnPressed,
                     ]}
@@ -272,13 +314,14 @@ export function UnloadModal({
                   </Pressable>
                 </View>
                 {/* 3. 拍照 10x（金霧節點可點） */}
-                <View style={styles.optionCol}>
-                  <View style={[styles.multiplierAbove, styles.multiplierAboveData]}>
+                <View style={[styles.optionCol, androidOptionColStyle]}>
+                  <View style={[styles.multiplierAbove, styles.multiplierAboveData, androidMultiplierStyle]}>
                     <Text style={styles.multiplierTextDark}>{PAYOUT_MATRIX.DATA}x</Text>
                   </View>
                   <Pressable
                     style={({ pressed }) => [
                       styles.squareBtn,
+                      androidSquareBtnStyle,
                       styles.cardBase,
                       !isGoldenMistNode && styles.cardDisabled,
                       pressed && styles.squareBtnPressed,
@@ -405,7 +448,8 @@ const styles = StyleSheet.create({
     width: 118,
     height: 118,
     borderRadius: 20,
-    paddingVertical: 6,
+    paddingTop: 6,
+    paddingBottom: 10,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -435,7 +479,8 @@ const styles = StyleSheet.create({
   squareInner: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 0,
+    paddingBottom: 8,
   },
   squareIcon: {
     width: 52,
@@ -493,6 +538,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
+    marginTop: 2,
   },
   squareStaminaIcon: {
     width: 22,

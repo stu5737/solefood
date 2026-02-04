@@ -126,8 +126,19 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const locationLogCountRef = useRef(0);
   const userModelLogCountRef = useRef(0);
   
+  // ✅ Android 鏡頭動畫鎖：動畫期間禁止 camera follow 覆蓋
+  const isCameraAnimatingRef = useRef(false);
+  const hasInitialZoomedRef = useRef(false);
+  const hasGameZoomedRef = useRef(false);
+  const hasIdleZoomedRef = useRef(false); // GAME → IDLE 動畫追蹤
+  
   // ✅ 老 Android 設備性能優化
   const [performanceLevel, setPerformanceLevel] = useState<'high' | 'medium' | 'low'>('high');
+  
+  // ✅ Android 鏡頭控制：用 state 完全控制 zoom/pitch/center，避免 prop 衝突
+  const [androidCameraZoom, setAndroidCameraZoom] = useState<number>(17.5);
+  const [androidCameraPitch, setAndroidCameraPitch] = useState<number>(0);
+  const [androidCameraCenter, setAndroidCameraCenter] = useState<[number, number] | null>(null);
   
   // 檢測設備性能等級
   useEffect(() => {
@@ -219,6 +230,13 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       };
     }
   }, [performanceLevel]);
+  
+  // ✅ Android：初始化鏡頭狀態（performanceSettings 變化時同步）
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    setAndroidCameraZoom(performanceSettings.zoomLevel);
+    setAndroidCameraPitch(viewMode === '3D' ? performanceSettings.pitch : 0);
+  }, [performanceSettings.zoomLevel, performanceSettings.pitch, viewMode]);
 
   // 實際地圖模式
   const actualMapMode = showHistoryTrail ? 'HISTORY' : mapMode;
@@ -389,6 +407,15 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           throw new Error('無法獲取初始位置');
         }
 
+        const userCenter: [number, number] = [initialLocation.coords.longitude, initialLocation.coords.latitude];
+        
+        console.log('[MapboxRealTimeMap] ✅ 初始位置已獲取:', {
+          lat: initialLocation.coords.latitude.toFixed(6),
+          lon: initialLocation.coords.longitude.toFixed(6),
+          accuracy: initialLocation.coords.accuracy?.toFixed(1) + 'm',
+        });
+
+        // 設置初始位置（先設定，讓 Camera 組件能渲染）
         setCurrentLocation(initialLocation);
         latestLocationRef.current = initialLocation;
         lastLocationFlushTsRef.current = initialLocation.timestamp;
@@ -397,12 +424,86 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         if (initialLocation.coords.heading !== null && initialLocation.coords.heading !== undefined && initialLocation.coords.heading >= 0) {
           setMovementHeading(initialLocation.coords.heading);
         }
-        
-        console.log('[MapboxRealTimeMap] ✅ 初始位置已獲取:', {
-          lat: initialLocation.coords.latitude.toFixed(6),
-          lon: initialLocation.coords.longitude.toFixed(6),
-          accuracy: initialLocation.coords.accuracy?.toFixed(1) + 'm',
-        });
+
+        // ========== iOS 專用：用 setCamera 同步定位到正確位置 ==========
+        if (Platform.OS === 'ios') {
+          setTimeout(() => {
+            cameraRef.current?.setCamera({
+              centerCoordinate: userCenter,
+              zoomLevel: performanceSettings.zoomLevel,
+              pitch: viewMode === '3D' ? performanceSettings.pitch : 0,
+              heading: 0,
+              animationDuration: 0, // 瞬間完成，無動畫
+            });
+            console.log('[iOS Camera] 🎯 已用 setCamera 同步定位到用戶位置', userCenter);
+          }, 50); // 等待 Camera 組件 mount
+        }
+
+        // ========== Android 專用：用 setCamera 同步定位 + state 動畫 ==========
+        if (Platform.OS === 'android' && !hasInitialZoomedRef.current) {
+          hasInitialZoomedRef.current = true;
+          isCameraAnimatingRef.current = true; // 🔒 鎖定 camera follow
+          
+          const targetZoom = performanceSettings.zoomLevel;
+          const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
+          
+          console.log('[Android Camera] 🎬 開始首次 IDLE zoom in 動畫（App啟動，地球→街道，漸進式減速）', {
+            center: userCenter,
+            stages: '2 → 8 → 13 → 16 → ' + targetZoom,
+            timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
+            totalDuration: '~3900ms',
+            pitch: targetPitch,
+          });
+          
+          // 🎯 步驟1：立即用 setCamera API 同步定位到用戶位置 + zoom 2（瞬間完成，無動畫）
+          setTimeout(() => {
+            cameraRef.current?.setCamera({
+              centerCoordinate: userCenter,
+              zoomLevel: 2,
+              pitch: 0,
+              heading: 0,
+              animationDuration: 0, // 瞬間完成
+            });
+            console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
+            
+            // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
+            setAndroidCameraCenter(userCenter);
+            setAndroidCameraZoom(2);
+            setAndroidCameraPitch(0);
+          }, 50); // 等待 Camera 組件 mount
+          
+          // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
+          setTimeout(() => {
+            setAndroidCameraZoom(8);
+            console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
+          }, 400);
+          
+          // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
+          setTimeout(() => {
+            setAndroidCameraZoom(13);
+            console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
+          }, 950);
+          
+          // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
+          setTimeout(() => {
+            setAndroidCameraZoom(16);
+            console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
+          }, 1700);
+          
+          // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
+          setTimeout(() => {
+            setAndroidCameraZoom(targetZoom);
+            setAndroidCameraPitch(targetPitch);
+            console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
+            
+            // 1200ms 後解鎖並釋放中心點控制
+            setTimeout(() => {
+              setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
+              isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
+              console.log('[Android Camera] ✅ 首次 IDLE zoom in 完成');
+            }, 1200);
+          }, 2700);
+        }
 
         // 位置追蹤
         // ✅ Android 高速時跟得上：更短 timeInterval（500ms）+ callback 只寫 ref，由定時 flush 更新 UI
@@ -560,26 +661,191 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     };
   }, [isCollecting]);
 
+  // ========== Android 專用：IDLE → GAME (isCollecting) 時 zoom in 動畫（地球→街道，漸進式減速）==========
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!isCollecting) {
+      hasGameZoomedRef.current = false;
+      return;
+    }
+    if (hasGameZoomedRef.current) return;
+    if (!currentLocation?.coords) return;
+    
+    hasGameZoomedRef.current = true;
+    isCameraAnimatingRef.current = true; // 🔒 鎖定 camera follow
+    
+    const targetZoom = performanceSettings.zoomLevel;
+    const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
+    const userCenter: [number, number] = [currentLocation.coords.longitude, currentLocation.coords.latitude];
+    
+    console.log('[Android Camera] 🎬 開始 GAME zoom in 動畫（IDLE→GAME，地球→街道，漸進式減速）', {
+      center: userCenter,
+      stages: '2 → 8 → 13 → 16 → ' + targetZoom,
+      timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
+      totalDuration: '~3900ms',
+      pitch: targetPitch,
+    });
+    
+    // 🎯 步驟1：等待 50ms 後執行（跟 App 啟動邏輯一致）
+    setTimeout(() => {
+      cameraRef.current?.setCamera({
+        centerCoordinate: userCenter,
+        zoomLevel: 2,
+        pitch: 0,
+        heading: 0,
+        animationDuration: 0, // 瞬間完成
+      });
+      console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
+      
+      // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
+      setAndroidCameraCenter(userCenter);
+      setAndroidCameraZoom(2);
+      setAndroidCameraPitch(0);
+    }, 50); // 等待 Camera 組件 mount（跟 App 啟動一樣）
+    
+    // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
+    setTimeout(() => {
+      setAndroidCameraZoom(8);
+      console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
+    }, 400);
+    
+    // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
+    setTimeout(() => {
+      setAndroidCameraZoom(13);
+      console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
+    }, 950);
+    
+    // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
+    setTimeout(() => {
+      setAndroidCameraZoom(16);
+      console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
+    }, 1700);
+    
+    // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
+    setTimeout(() => {
+      setAndroidCameraZoom(targetZoom);
+      setAndroidCameraPitch(targetPitch);
+      console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
+      
+      // 1200ms 後解鎖並釋放中心點控制
+      setTimeout(() => {
+        setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
+        isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
+        console.log('[Android Camera] ✅ GAME zoom in 完成');
+      }, 1200);
+    }, 2700);
+  }, [isCollecting, currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, performanceSettings.zoomLevel, viewMode]);
+
+  // ========== Android 專用：GAME → IDLE (isCollecting 結束) 時 zoom in 動畫（地球→街道，漸進式減速）==========
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    
+    // 當採集中時，重置標記
+    if (isCollecting) {
+      hasIdleZoomedRef.current = false;
+      return;
+    }
+    
+    // 如果已經執行過或沒有位置，跳過
+    if (hasIdleZoomedRef.current) return;
+    if (!currentLocation?.coords) return;
+    
+    hasIdleZoomedRef.current = true;
+    isCameraAnimatingRef.current = true; // 🔒 鎖定 camera follow
+    
+    const targetZoom = performanceSettings.zoomLevel;
+    const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
+    const userCenter: [number, number] = [currentLocation.coords.longitude, currentLocation.coords.latitude];
+    
+    console.log('[Android Camera] 🎬 開始 IDLE zoom in 動畫（GAME→IDLE，地球→街道，漸進式減速）', {
+      center: userCenter,
+      stages: '2 → 8 → 13 → 16 → ' + targetZoom,
+      timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
+      totalDuration: '~3900ms',
+      pitch: targetPitch,
+    });
+    
+    // 🎯 步驟1：等待 50ms 後執行（跟 App 啟動邏輯一致）
+    setTimeout(() => {
+      cameraRef.current?.setCamera({
+        centerCoordinate: userCenter,
+        zoomLevel: 2,
+        pitch: 0,
+        heading: 0,
+        animationDuration: 0, // 瞬間完成
+      });
+      console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
+      
+      // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
+      setAndroidCameraCenter(userCenter);
+      setAndroidCameraZoom(2);
+      setAndroidCameraPitch(0);
+    }, 50); // 等待 Camera 組件 mount（跟 App 啟動一樣）
+    
+    // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
+    setTimeout(() => {
+      setAndroidCameraZoom(8);
+      console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
+    }, 400);
+    
+    // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
+    setTimeout(() => {
+      setAndroidCameraZoom(13);
+      console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
+    }, 950);
+    
+    // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
+    setTimeout(() => {
+      setAndroidCameraZoom(16);
+      console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
+    }, 1700);
+    
+    // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
+    setTimeout(() => {
+      setAndroidCameraZoom(targetZoom);
+      setAndroidCameraPitch(targetPitch);
+      console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
+      
+      // 1200ms 後解鎖並釋放中心點控制
+      setTimeout(() => {
+        setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
+        isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
+        console.log('[Android Camera] ✅ IDLE zoom in 完成（採集結束）');
+      }, 1200);
+    }, 2700);
+  }, [isCollecting, currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, performanceSettings.zoomLevel, viewMode]);
+
   // ========== 游標跟隨：當 currentLocation 更新時強制 Camera 跟隨（expo-location 驅動） ==========
   // followUserLocation 跟隨的是 Mapbox 原生定位，模擬器 GPX 由 expo-location 提供，故需手動驅動 Camera
+  // Android：改用 state 同步 zoom/pitch，避免與動畫衝突
   const lastCameraCenterRef = useRef<[number, number] | null>(null);
   useEffect(() => {
+    if (isCameraAnimatingRef.current) return; // 🔒 動畫期間跳過，避免覆蓋動畫
     if (actualMapMode !== 'GAME' || isRecenteringManually || !currentLocation?.coords) return;
+    
     const lon = currentLocation.coords.longitude;
     const lat = currentLocation.coords.latitude;
     const center: [number, number] = [lon, lat];
     const last = lastCameraCenterRef.current;
     if (last && last[0] === center[0] && last[1] === center[1]) return;
     lastCameraCenterRef.current = center;
-    cameraRef.current?.setCamera({
-      centerCoordinate: center,
-      zoomLevel: performanceSettings.zoomLevel,
-      pitch: viewMode === '3D' ? performanceSettings.pitch : 0,
-      heading: 0,
-      animationDuration: CAMERA_CONFIG.animationDuration,
-      animationMode: 'easeTo',
-    });
-  }, [currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, actualMapMode, isRecenteringManually, viewMode, performanceSettings.zoomLevel, performanceSettings.pitch]);
+    
+    if (Platform.OS === 'android') {
+      // Android：用 state 同步鏡頭設定（避免 setCamera 與 prop 衝突）
+      setAndroidCameraZoom(performanceSettings.zoomLevel);
+      setAndroidCameraPitch(viewMode === '3D' ? performanceSettings.pitch : 0);
+    } else {
+      // iOS：用 setCamera（維持原邏輯，完美不動）
+      cameraRef.current?.setCamera({
+        centerCoordinate: center,
+        zoomLevel: performanceSettings.zoomLevel,
+        pitch: viewMode === '3D' ? performanceSettings.pitch : 0,
+        heading: 0,
+        animationDuration: CAMERA_CONFIG.animationDuration,
+        animationMode: 'easeTo',
+      });
+    }
+  }, [currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, actualMapMode, isRecenteringManually, viewMode, performanceSettings.zoomLevel, performanceSettings.pitch, androidCameraZoom, androidCameraPitch]);
 
   // ========== 歷史會話載入（僅用於歷史軌跡模式） ==========
   // ⚠️ 注意：歷史 H3 渲染已改用 exploredHexes，不再依賴 historySessions
@@ -1258,14 +1524,17 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         {/* 🎮 Pokémon GO 風格攝影機 - 支援 2D/3D 切換 + 性能優化 */}
         <Mapbox.Camera
           ref={cameraRef}
-          zoomLevel={performanceSettings.zoomLevel} // ✅ 根據性能等級調整縮放
-          pitch={viewMode === '3D' ? performanceSettings.pitch : 0} // ✅ 低端設備強制 2D（pitch = 0）
+          zoomLevel={Platform.OS === 'android' ? androidCameraZoom : performanceSettings.zoomLevel}
+          pitch={Platform.OS === 'android' ? androidCameraPitch : (viewMode === '3D' ? performanceSettings.pitch : 0)}
           heading={0} // ✅ 北方朝上，不跟隨設備旋轉（三角形會自己根據運動方向旋轉）
-          followUserLocation={actualMapMode === 'GAME' && !isRecenteringManually}
+          followUserLocation={actualMapMode === 'GAME' && !isRecenteringManually && !isCameraAnimatingRef.current}
           followUserMode={CAMERA_CONFIG.followUserMode} // 兩種模式都使用 'course' 模式
-          animationDuration={CAMERA_CONFIG.animationDuration}
+          animationDuration={Platform.OS === 'android' ? 900 : CAMERA_CONFIG.animationDuration}
           centerCoordinate={
-            actualMapMode === 'HISTORY' && selectedSession && selectedSession.points.length > 0
+            // Android：動畫期間使用鎖定的中心點（避免飄移）
+            Platform.OS === 'android' && androidCameraCenter
+              ? androidCameraCenter
+              : actualMapMode === 'HISTORY' && selectedSession && selectedSession.points.length > 0
               ? [selectedSession.points[0].longitude, selectedSession.points[0].latitude]
               : currentLocation && currentLocation.coords
               ? [currentLocation.coords.longitude, currentLocation.coords.latitude]
@@ -1614,8 +1883,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
 
         {/* 選中餐廳時：tooltip 浮在圖標上方，錨點在圖標下方一點，與圖標保持間隔不壓住 */}
         {selectedRestaurantForUnload && isCollecting && actualMapMode === 'GAME' && onUnload && onCamera && onCloseRestaurant && (() => {
-          // Android 與 iOS 座標偏移可能不同，Android 需微調使 tooltip 對齊圖標正上方
-          const latOffset = Platform.OS === 'android' ? 0.00022 : 0.00018;
+          // Android 與 iOS 座標偏移可能不同；Android 縮小垂直間距，讓 tooltip 與餐廳圖標不要離太遠
+          const latOffset = Platform.OS === 'android' ? 0.00012 : 0.00018;
           const lngOffset = Platform.OS === 'android' ? 0 : 0;
           const tooltipCoord: [number, number] = [
             selectedRestaurantForUnload.coord[0] + lngOffset,
@@ -1650,7 +1919,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
                   </View>
                 </View>
                 <View style={floatingUnloadStyles.tooltipTail} />
-                <View style={floatingUnloadStyles.tooltipGap} />
+                <View style={[floatingUnloadStyles.tooltipGap, Platform.OS === 'android' && { height: 4 }]} />
               </View>
             </Mapbox.MarkerView>
           );
