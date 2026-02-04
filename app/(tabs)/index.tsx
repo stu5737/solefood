@@ -681,10 +681,12 @@ export default function GameScreenV9Plus() {
           maxWeight={effectiveMaxWeight}
           actionState={gameState === 'COLLECTING' ? 'active' : 'idle'}
           onActionPress={() => {
-            if (gameState === 'IDLE') {
-              handleStartShift();
-            } else if (gameState === 'COLLECTING') {
+            if (gameState === 'COLLECTING') {
               console.log('[GameScreen] CAPTURE pressed');
+            } else {
+              // 只要不在採集中（IDLE / PICNIC / UNLOADING 等），就允許開始採集
+              // 防止野餐後 gameState 卡在 PICNIC 導致 GO 按鈕無效
+              handleStartShift();
             }
           }}
         />

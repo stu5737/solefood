@@ -389,29 +389,48 @@ class BackgroundLocationService {
    * 停止後台位置追蹤
    * 
    * ⭐ 防崩潰修復：強制停止並清理，防止殘留任務
+   * ⭐ Android：當 native 層 SharedPreferences 為 null 時（例如卸貨/野餐時機），僅記警告、不拋錯
    */
   async stopBackgroundTracking(): Promise<void> {
     try {
       console.log('[BackgroundLocationService] 🧹 開始停止背景位置追蹤...');
 
       // ⭐ 防崩潰修復：無論 isTracking 狀態如何，都嘗試停止（防止殘留）
-      // 檢查任務是否在運行
-      const isTaskRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      
+      let isTaskRunning = false;
+      try {
+        isTaskRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+      } catch (checkError: any) {
+        // Android 有時 hasStartedLocationUpdatesAsync 也會因 SharedPreferences 為 null 拋錯，視為未在運行
+        const msg = String(checkError?.message ?? checkError ?? '');
+        if (Platform.OS === 'android' && (msg.includes('SharedPreferences') || msg.includes('NullPointerException'))) {
+          console.warn('[BackgroundLocationService] ⚠️ 檢查任務狀態時 native 未就緒，視為已停止');
+          this.isTracking = false;
+          return;
+        }
+        throw checkError;
+      }
+
       if (isTaskRunning) {
-        // 停止後台位置更新
         await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
         console.log('[BackgroundLocationService] ✅ 背景位置更新任務已停止');
       } else {
         console.log('[BackgroundLocationService] ℹ️  任務未在運行，無需停止');
       }
 
-      // ⭐ 強制重置狀態（無論是否成功停止）
       this.isTracking = false;
       console.log('[BackgroundLocationService] ✅ 背景位置追蹤已完全停止');
-    } catch (error) {
-      console.error('[BackgroundLocationService] ❌ 停止背景位置追蹤時出錯:', error);
-      // ⭐ 即使出錯也強制重置狀態（防止卡在 tracking 狀態）
+    } catch (error: any) {
+      const msg = String(error?.message ?? error ?? '');
+      const isAndroidPrefNull = Platform.OS === 'android' && (
+        msg.includes('SharedPreferences') ||
+        msg.includes('NullPointerException') ||
+        msg.includes('null object reference')
+      );
+      if (isAndroidPrefNull) {
+        console.warn('[BackgroundLocationService] ⚠️ 停止時 native 未就緒（SharedPreferences 為 null），已視為已停止');
+      } else {
+        console.error('[BackgroundLocationService] ❌ 停止背景位置追蹤時出錯:', error);
+      }
       this.isTracking = false;
     }
   }
