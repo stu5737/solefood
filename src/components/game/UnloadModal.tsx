@@ -121,8 +121,7 @@ export function UnloadModal({
     await handleUnload('porter');
   };
 
-  if (items.length === 0) return null;
-
+  // 空背包時仍顯示彈窗，可選擇野餐／卸貨，只是無獎勵（revenue 0）
   const androidOptionColStyle = Platform.OS === 'android' ? { width: btnSize } : {};
   const androidSquareBtnStyle = Platform.OS === 'android' ? { width: btnSize, height: btnSize } : {};
   const androidMultiplierStyle = Platform.OS === 'android' ? { marginBottom: 5 } : {};
