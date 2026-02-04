@@ -610,10 +610,6 @@ export default function GameScreenV9Plus() {
             onUnload={
               MAP_ENGINE === 'mapbox'
                 ? () => {
-                    if (items.length === 0) {
-                      showFloatingText('背包是空的，無法卸貨', '#FF9800');
-                      return;
-                    }
                     const dist =
                       userLocation &&
                       selectedRestaurantForUnload &&
@@ -700,10 +696,6 @@ export default function GameScreenV9Plus() {
           <TouchableOpacity
             style={styles.callTruckButton}
             onPress={() => {
-              if (items.length === 0) {
-                showFloatingText('背包是空的，無法卸貨', '#FF9800');
-                return;
-              }
               setUnloadModalSource('anywhere');
               setUnloadModalVisible(true);
             }}
@@ -737,10 +729,6 @@ export default function GameScreenV9Plus() {
               : undefined,
           }}
           onUnload={() => {
-            if (items.length === 0) {
-              showFloatingText('背包是空的，無法卸貨', '#FF9800');
-              return;
-            }
             const dist =
               userLocation &&
               selectedRestaurantForUnload &&

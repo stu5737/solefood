@@ -104,6 +104,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   
   // ✅ 倒數動畫狀態
   const [countdown, setCountdown] = useState<number | null>(null); // 當前倒數數字（3, 2, 1 或 null）
+  const [countdownComplete, setCountdownComplete] = useState(false); // 321 結束後才 true，避免先渲染 3D 推車再倒數
   const countdownOpacity = useRef(new Animated.Value(0)).current; // 倒數動畫透明度
   const countdownScale = useRef(new Animated.Value(1)).current; // 倒數動畫縮放
 
@@ -877,6 +878,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     if (!isCollecting) {
       // 採集結束，重置倒數狀態，切換回導航模式
       setCountdown(null);
+      setCountdownComplete(false);
       countdownOpacity.setValue(0);
       countdownScale.setValue(1);
       
@@ -886,7 +888,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       return;
     }
 
-    // ✅ 採集開始：切換為探索模式，並觸發 MapView 重新掛載以確保圖層順序正確
+    // ✅ 採集開始：先隱藏 3D 推車，等 321 完成後再顯示
+    setCountdownComplete(false);
+    // 切換為探索模式，並觸發 MapView 重新掛載以確保圖層順序正確
     // ⚠️ 關鍵：與採集結束時的行為一致，都通過 showLabels 改變觸發 MapView 重新掛載
     console.log('[MapboxRealTimeMap] 🎬 採集開始，切換為探索模式');
     console.log('[MapboxRealTimeMap] 📊 採集開始前狀態:', {
@@ -950,9 +954,10 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       currentCount -= 1;
       
       if (currentCount <= 0) {
-        // 倒數結束
+        // 倒數結束：先標記完成再回調，如此 3D 推車會在 321 之後才顯示
         clearInterval(countdownInterval);
         setCountdown(null);
+        setCountdownComplete(true);
         countdownOpacity.setValue(0);
         countdownScale.setValue(1);
         console.log('[MapboxRealTimeMap] ✅ 倒數動畫結束，採集開始');
@@ -1683,8 +1688,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             </Mapbox.ShapeSource>
           ) : null;
         })()}
-        {/* 用戶位置標記（白色箭頭）- 僅 IDLE 顯示；按下採集後隱藏，改顯示 3D 推車 */}
-        {!isCollecting && (() => {
+        {/* 用戶位置標記（白色箭頭）- IDLE 或 321 倒數中顯示；倒數完成後改顯示 3D 推車 */}
+        {(!isCollecting || !countdownComplete) && (() => {
           const hasLocation = !!(currentLocation && currentLocation.coords);
           const shouldShow = actualMapMode === 'GAME' && hasLocation;
           const coords: [number, number] = hasLocation
@@ -1734,8 +1739,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           );
         })()}
 
-        {/* 🎮 用戶 3D 推車（GLB）- 僅按下採集後才渲染；IDLE 時只顯示白色箭頭 + 性能優化 */}
-        {userModelGeoJson && is3DModelReady && isCollecting && performanceSettings.enable3DModel && (
+        {/* 🎮 用戶 3D 推車（GLB）- 321 倒數完成後才顯示，避免 IDLE→遊戲時先閃推車再倒數 */}
+        {userModelGeoJson && is3DModelReady && isCollecting && countdownComplete && performanceSettings.enable3DModel && (
           <Mapbox.ShapeSource 
             key="user-3d-model-source"
             id="user-3d-model-source" 
