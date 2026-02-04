@@ -66,9 +66,7 @@ export const IdleTopHUD: React.FC<IdleTopHUDProps> = React.memo(({
             source={require('../../../assets/images/soil_token_icon.png')}
             style={styles.tokenIcon}
             resizeMode="contain"
-            onError={(error) => {
-              console.warn('[IdleTopHUD] $SOIL 圖標加載失敗:', error);
-            }}
+            onError={() => {}}
           />
         </View>
         <View style={styles.balanceTrack}>

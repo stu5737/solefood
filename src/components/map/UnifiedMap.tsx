@@ -19,7 +19,6 @@ if (MAP_ENGINE === 'mapbox') {
     MapboxRealTimeMap = mapboxModule.MapboxRealTimeMap;
     MapboxRealTimeMapRef = mapboxModule.MapboxRealTimeMapRef;
   } catch (error) {
-    console.warn('[UnifiedMap] Mapbox 模組載入失敗，將使用 react-native-maps:', error);
   }
 }
 
@@ -53,7 +52,6 @@ export const UnifiedMap = React.forwardRef<UnifiedMapRef, UnifiedMapProps>((prop
     try {
       return <MapboxRealTimeMap {...props} ref={ref} />;
     } catch (error) {
-      console.error('[UnifiedMap] Mapbox 渲染失敗，回退到 react-native-maps:', error);
       return (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>⚠️ Mapbox 載入失敗</Text>

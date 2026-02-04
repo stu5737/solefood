@@ -124,8 +124,8 @@ export const StatusRing: React.FC<StatusRingProps> = ({
   let ringGlassSource: any = null;
   try {
     ringGlassSource = require('../../../assets/images/ring_glass_overlay.png');
-  } catch (e) {
-    console.warn('[StatusRing] ⚠️ Glass overlay image not found. Please add ring_glass_overlay.png to assets/images/');
+  } catch {
+    // 可選素材不存在時靜默忽略
   }
 
   // 動態計算圓弧路徑字符串（使用 useDerivedValue）

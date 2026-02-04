@@ -25,9 +25,7 @@ export const BackpackIcon: React.FC<BackpackIconProps> = React.memo(({ size = 36
       source={imageSource}
       style={[styles.icon, { width: size, height: size }]}
       resizeMode="contain"
-      onError={(error) => {
-        console.warn('[BackpackIcon] 圖片加載失敗:', error);
-      }}
+      onError={() => {}}
     />
   );
 });

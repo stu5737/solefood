@@ -14,9 +14,7 @@ try {
   const skia = require('@shopify/react-native-skia');
   SkiaComponents = skia;
   useSkia = true;
-  console.log('[ActionCircle] ✅ Skia loaded successfully');
 } catch (e) {
-  console.warn('[ActionCircle] ⚠️ Skia not installed, using SVG fallback');
 }
 
 // 如果 Skia 不可用，使用 react-native-svg 作為備用

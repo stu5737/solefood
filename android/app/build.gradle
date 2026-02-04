@@ -4,20 +4,83 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+// Resolve node path so Gradle (e.g. from Android Studio) can find node when not in PATH (nvm/fnm)
+def getNodeExecutable() {
+    def propNode = findProperty("node.executable")?.toString()?.trim()
+    if (propNode) return propNode
+    def envNode = System.getenv("NODE_BINARY") ?: System.getenv("EXPO_NODE_PATH")
+    if (envNode?.trim()) return envNode.trim()
+    def home = System.getProperty("user.home")
+    def projectRootDir = rootDir.getAbsoluteFile().getParentFile().getParentFile()
+    // File written by project (e.g. postinstall) so IDE builds can find node
+    def nodePathFile = new File(projectRootDir, ".node_path")
+    if (nodePathFile.exists()) {
+        def path = nodePathFile.text.trim()
+        if (path && new File(path).exists()) return path
+    }
+    // NVM_DIR when set (e.g. by Android Studio env)
+    def nvmDir = System.getenv("NVM_DIR") ?: new File(home, ".nvm").absolutePath
+    def nvmVersions = new File(nvmDir, "versions/node")
+    if (nvmVersions.exists()) {
+        def defaultAlias = new File(nvmDir, "alias/default")
+        if (defaultAlias.exists()) {
+            def version = defaultAlias.text.trim()
+            def nodeBin = new File(nvmVersions, "${version}/bin/node")
+            if (nodeBin.exists()) return nodeBin.absolutePath
+        }
+        nvmVersions.listFiles()?.sort()?.reverse()?.each { dir ->
+            def nodeBin = new File(dir, "bin/node")
+            if (nodeBin.exists()) return nodeBin.absolutePath
+        }
+    }
+    // fnm (multiple possible locations)
+    for (fnmBase in [home + "/.fnm", System.getenv("FNM_DIR"), home + "/.local/share/fnm"]) {
+        if (fnmBase) {
+            def fnmNode = new File(fnmBase.toString(), "current/bin/node")
+            if (fnmNode.exists()) return fnmNode.absolutePath
+        }
+    }
+    // volta
+    def voltaNode = new File(home, ".volta/bin/node")
+    if (voltaNode.exists()) return voltaNode.absolutePath
+    // Homebrew (including node formula)
+    for (path in ["/opt/homebrew/bin/node", "/opt/homebrew/opt/node/bin/node", "/usr/local/bin/node"]) {
+        if (new File(path).exists()) return path
+    }
+    // asdf
+    def asdfNode = new File(home, ".asdf/shims/node")
+    if (asdfNode.exists()) return asdfNode.absolutePath
+    // Try login shell (picks up nvm/fnm from .zshrc/.bash_profile)
+    try {
+        def whichProc = ["/bin/bash", "-l", "-c", "which node 2>/dev/null"].execute(null, projectRootDir)
+        whichProc.waitForOrKill(3000)
+        if (whichProc.exitValue() == 0) {
+            def path = whichProc.text.trim()
+            if (path && new File(path).exists()) return path
+        }
+    } catch (Exception ignored) {}
+    // Fallback so Android Studio (no nvm in PATH) never runs bare "node"
+    def nvmDefault = new File(home, ".nvm/versions/node/v20.19.6/bin/node")
+    if (nvmDefault.exists()) return nvmDefault.absolutePath
+    return "node"
+}
+def nodeExecutable = getNodeExecutable()
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
-    reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-    hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
-    codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+    nodeExecutableAndArgs = [nodeExecutable]
+    entryFile = file([nodeExecutable, "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    reactNativeDir = new File([nodeExecutable, "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+    hermesCommand = new File([nodeExecutable, "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
+    codegenDir = new File([nodeExecutable, "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
     // Use Expo CLI to bundle the app, this ensures the Metro config
     // works correctly with Expo projects.
-    cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    cliFile = new File([nodeExecutable, "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
 
     /* Folders */

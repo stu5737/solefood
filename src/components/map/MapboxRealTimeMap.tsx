@@ -158,29 +158,14 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         // API 30+ = Android 11+ - 2020年+
         const androidVersion = Platform.Version as number;
         
-        // 低端設備：Android 8.0 及以下（API < 28）
         if (androidVersion < 28) {
-          console.log('[Performance] 🔧 檢測到低端 Android 設備（API < 28），啟用極簡性能模式:', {
-            androidVersion,
-            androidName: `Android ${androidVersion >= 26 ? '8.x' : '7.x 或更早'}`,
-          });
           setPerformanceLevel('low');
-        } 
-        // 中端設備：Android 9.0-10 (API 28-29)
-        else if (androidVersion < 30) {
-          console.log('[Performance] ⚡ 檢測到中端 Android 設備（API 28-29），啟用平衡性能模式:', {
-            androidVersion,
-            androidName: androidVersion === 28 ? 'Android 9.0' : 'Android 10',
-          });
+        } else if (androidVersion < 30) {
           setPerformanceLevel('medium');
-        } 
-        // 高端設備：Android 11+ (API 30+)
-        else {
-          console.log('[Performance] 🚀 檢測到高端 Android 設備（API 30+），使用全功能模式');
+        } else {
           setPerformanceLevel('high');
         }
-      } catch (error) {
-        console.warn('[Performance] ⚠️ 無法檢測設備性能，使用默認高性能模式:', error);
+      } catch {
         setPerformanceLevel('high');
       }
     };
@@ -273,7 +258,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       
       // 如果連續靜止超過閾值，完全鎖定方向（不再變化）
       if (stationaryCountRef.current > STATIONARY_LOCK_COUNT) {
-        console.log('[Heading] 🔒 靜止鎖定：方向固定為', lastValidHeadingRef.current);
         return lastValidHeadingRef.current;
       }
       
@@ -282,8 +266,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       const normalizedDiff = Math.min(headingDiff, 360 - headingDiff); // 處理 0°/360° 邊界
       
       if (normalizedDiff < MIN_HEADING_CHANGE) {
-        console.log('[Heading] ⚠️ 靜止時方向變化過小，視為噪音：', normalizedDiff, '°');
-        return lastValidHeadingRef.current; // 保持上次有效方向
+        return lastValidHeadingRef.current;
       }
     } else {
       // 移動時重置靜止計數器
@@ -354,12 +337,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         // ✅ 首先請求位置權限
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          console.warn('[MapboxRealTimeMap] ⚠️ 位置權限未授予，狀態:', status);
-          console.warn('[MapboxRealTimeMap] 💡 請在 iOS 模擬器中：Settings → Privacy & Security → Location Services → 啟用應用位置權限');
-          
-          // 重試機制（最多重試 3 次，每次間隔 2 秒）
           if (retryCount < 3) {
-            console.log(`[MapboxRealTimeMap] 🔄 將在 2 秒後重試 (${retryCount + 1}/3)...`);
             retryTimeout = setTimeout(() => {
               startTracking(retryCount + 1);
             }, 2000);
@@ -367,16 +345,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           return;
         }
 
-        console.log('[MapboxRealTimeMap] ✅ 位置權限已授予');
-
-        // ✅ 檢查位置服務是否可用
         const isEnabled = await Location.hasServicesEnabledAsync();
         if (!isEnabled) {
-          console.warn('[MapboxRealTimeMap] ⚠️ 位置服務未啟用');
-          console.warn('[MapboxRealTimeMap] 💡 請在 iOS 模擬器中：Features → Location → 選擇 GPX 文件或自定義位置');
-          
           if (retryCount < 3) {
-            console.log(`[MapboxRealTimeMap] 🔄 將在 2 秒後重試 (${retryCount + 1}/3)...`);
             retryTimeout = setTimeout(() => {
               startTracking(retryCount + 1);
             }, 2000);
@@ -392,10 +363,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             timeInterval: 5000, // 5 秒超時
           });
         } catch (getLocationError: any) {
-          // 如果是模擬器且 GPX 已配置，可能是位置服務還沒準備好，稍後重試
           if (Platform.OS === 'ios' && retryCount < 3) {
-            console.warn('[MapboxRealTimeMap] ⚠️ 獲取初始位置失敗，可能是模擬器位置服務未準備好:', getLocationError.message);
-            console.log(`[MapboxRealTimeMap] 🔄 將在 3 秒後重試 (${retryCount + 1}/3)...`);
             retryTimeout = setTimeout(() => {
               startTracking(retryCount + 1);
             }, 3000);
@@ -409,12 +377,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         }
 
         const userCenter: [number, number] = [initialLocation.coords.longitude, initialLocation.coords.latitude];
-        
-        console.log('[MapboxRealTimeMap] ✅ 初始位置已獲取:', {
-          lat: initialLocation.coords.latitude.toFixed(6),
-          lon: initialLocation.coords.longitude.toFixed(6),
-          accuracy: initialLocation.coords.accuracy?.toFixed(1) + 'm',
-        });
 
         // 設置初始位置（先設定，讓 Camera 組件能渲染）
         setCurrentLocation(initialLocation);
@@ -436,8 +398,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               heading: 0,
               animationDuration: 0, // 瞬間完成，無動畫
             });
-            console.log('[iOS Camera] 🎯 已用 setCamera 同步定位到用戶位置', userCenter);
-          }, 50); // 等待 Camera 組件 mount
+          }, 50);
         }
 
         // ========== Android 專用：用 setCamera 同步定位 + state 動畫 ==========
@@ -448,14 +409,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           const targetZoom = performanceSettings.zoomLevel;
           const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
           
-          console.log('[Android Camera] 🎬 開始首次 IDLE zoom in 動畫（App啟動，地球→街道，漸進式減速）', {
-            center: userCenter,
-            stages: '2 → 8 → 13 → 16 → ' + targetZoom,
-            timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
-            totalDuration: '~3900ms',
-            pitch: targetPitch,
-          });
-          
           // 🎯 步驟1：立即用 setCamera API 同步定位到用戶位置 + zoom 2（瞬間完成，無動畫）
           setTimeout(() => {
             cameraRef.current?.setCamera({
@@ -465,7 +418,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               heading: 0,
               animationDuration: 0, // 瞬間完成
             });
-            console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
             
             // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
             setAndroidCameraCenter(userCenter);
@@ -476,32 +428,25 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
           setTimeout(() => {
             setAndroidCameraZoom(8);
-            console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
           }, 400);
           
           // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
           setTimeout(() => {
             setAndroidCameraZoom(13);
-            console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
           }, 950);
           
           // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
           setTimeout(() => {
             setAndroidCameraZoom(16);
-            console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
           }, 1700);
           
           // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
           setTimeout(() => {
             setAndroidCameraZoom(targetZoom);
             setAndroidCameraPitch(targetPitch);
-            console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
-            
-            // 1200ms 後解鎖並釋放中心點控制
             setTimeout(() => {
-              setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
-              isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
-              console.log('[Android Camera] ✅ 首次 IDLE zoom in 完成');
+              setAndroidCameraCenter(null);
+              isCameraAnimatingRef.current = false;
             }, 1200);
           }, 2700);
         }
@@ -519,13 +464,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             // ✅ 先寫入 ref，不直接 setState，避免高速時 callback 阻塞導致卡死
             latestLocationRef.current = location;
             
-            // ✅ 調試日誌改為每 5 次印一次，減少 JS 線程負擔（高速時 log 會拖垮中階機）
-            if (__DEV__) {
-              locationLogCountRef.current += 1;
-              if (locationLogCountRef.current % 5 === 1) {
-                console.log('[Location Update] 📍', Platform.OS, location.coords.speed?.toFixed(1) + 'm/s', location.coords.latitude.toFixed(5), location.coords.longitude.toFixed(5));
-              }
-            }
+            locationLogCountRef.current += 1;
             
             // ✅ Android 修復：優先使用位置計算方向
             if (location.coords.speed !== null && location.coords.speed > SPEED_THRESHOLD) {
@@ -575,16 +514,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           }
         });
 
-        console.log('[MapboxRealTimeMap] ✅ 位置追蹤已啟動');
       } catch (error: any) {
-        console.error('[MapboxRealTimeMap] ❌ 位置追蹤失敗:', error);
-        console.error('[MapboxRealTimeMap] 錯誤詳情:', {
-          message: error?.message,
-          code: error?.code,
-          domain: error?.domain,
-        });
-        
-        // 提供具體的解決建議
         const errorCode = error?.code;
         const errorMessage = error?.message || '';
         const isLocationUnavailable = 
@@ -593,49 +523,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           error?.domain === 'kCLErrorDomain' ||
           errorMessage.includes('Cannot obtain current location') ||
           errorMessage.includes('location unavailable');
-
-        if (isLocationUnavailable) {
-          console.warn('');
-          console.warn('═══════════════════════════════════════════════════════════');
-          console.warn('🚨 位置服務不可用 (ERR_LOCATION_UNAVAILABLE)');
-          console.warn('═══════════════════════════════════════════════════════════');
-          console.warn('');
-          console.warn('📋 解決步驟（按順序執行）：');
-          console.warn('');
-          console.warn('【方法 1：在模擬器中直接設置（最快）】');
-          console.warn('   1. 在 iOS 模擬器菜單欄：');
-          console.warn('      Features → Location → Custom Location...');
-          console.warn('   2. 輸入座標：');
-          console.warn('      Latitude: 23.126480');
-          console.warn('      Longitude: 121.214800');
-          console.warn('   3. 點擊 OK');
-          console.warn('');
-          console.warn('【方法 2：使用 GPX 文件】');
-          console.warn('   1. 在 iOS 模擬器菜單欄：');
-          console.warn('      Features → Location → GPX File...');
-          console.warn('   2. 選擇 "Chishang_10min_Loop.gpx"');
-          console.warn('   3. 如果沒有看到，選擇 "Add GPX File..."');
-          console.warn('   4. 導航到：SolefoodMVP/Chishang_10min_Loop.gpx');
-          console.warn('');
-          console.warn('【方法 3：在 Xcode 中配置（永久）】');
-          console.warn('   1. 打開 Xcode：');
-          console.warn('      open ios/SolefoodMVP.xcworkspace');
-          console.warn('   2. Scheme → Edit Scheme... (⌘<)');
-          console.warn('   3. Run → Options → Core Location');
-          console.warn('   4. Default Location → 選擇 "Chishang 10min Loop"');
-          console.warn('   5. 點擊 Close 保存');
-          console.warn('');
-          console.warn('【驗證】');
-          console.warn('   - 確保模擬器菜單欄顯示：Features → Location → 不是 "None"');
-          console.warn('   - 重新運行應用後，位置應該可以獲取');
-          console.warn('');
-          console.warn('═══════════════════════════════════════════════════════════');
-          console.warn('');
-        }
+        void isLocationUnavailable;
         
-        // 重試機制（最多重試 3 次）
         if (retryCount < 3) {
-          console.log(`[MapboxRealTimeMap] 🔄 將在 3 秒後重試 (${retryCount + 1}/3)...`);
           retryTimeout = setTimeout(() => {
             startTracking(retryCount + 1);
           }, 3000);
@@ -679,24 +569,14 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
     const userCenter: [number, number] = [currentLocation.coords.longitude, currentLocation.coords.latitude];
     
-    console.log('[Android Camera] 🎬 開始 GAME zoom in 動畫（IDLE→GAME，地球→街道，漸進式減速）', {
-      center: userCenter,
-      stages: '2 → 8 → 13 → 16 → ' + targetZoom,
-      timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
-      totalDuration: '~3900ms',
-      pitch: targetPitch,
-    });
-    
-    // 🎯 步驟1：等待 50ms 後執行（跟 App 啟動邏輯一致）
     setTimeout(() => {
       cameraRef.current?.setCamera({
         centerCoordinate: userCenter,
         zoomLevel: 2,
         pitch: 0,
         heading: 0,
-        animationDuration: 0, // 瞬間完成
+        animationDuration: 0,
       });
-      console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
       
       // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
       setAndroidCameraCenter(userCenter);
@@ -704,35 +584,21 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       setAndroidCameraPitch(0);
     }, 50); // 等待 Camera 組件 mount（跟 App 啟動一樣）
     
-    // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
     setTimeout(() => {
       setAndroidCameraZoom(8);
-      console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
     }, 400);
-    
-    // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
     setTimeout(() => {
       setAndroidCameraZoom(13);
-      console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
     }, 950);
-    
-    // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
     setTimeout(() => {
       setAndroidCameraZoom(16);
-      console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
     }, 1700);
-    
-    // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
     setTimeout(() => {
       setAndroidCameraZoom(targetZoom);
       setAndroidCameraPitch(targetPitch);
-      console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
-      
-      // 1200ms 後解鎖並釋放中心點控制
       setTimeout(() => {
-        setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
-        isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
-        console.log('[Android Camera] ✅ GAME zoom in 完成');
+        setAndroidCameraCenter(null);
+        isCameraAnimatingRef.current = false;
       }, 1200);
     }, 2700);
   }, [isCollecting, currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, performanceSettings.zoomLevel, viewMode]);
@@ -758,60 +624,33 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     const targetPitch = viewMode === '3D' ? performanceSettings.pitch : 0;
     const userCenter: [number, number] = [currentLocation.coords.longitude, currentLocation.coords.latitude];
     
-    console.log('[Android Camera] 🎬 開始 IDLE zoom in 動畫（GAME→IDLE，地球→街道，漸進式減速）', {
-      center: userCenter,
-      stages: '2 → 8 → 13 → 16 → ' + targetZoom,
-      timing: '快(400ms) → 中(950ms) → 慢(1700ms) → 很慢(2700ms)',
-      totalDuration: '~3900ms',
-      pitch: targetPitch,
-    });
-    
-    // 🎯 步驟1：等待 50ms 後執行（跟 App 啟動邏輯一致）
     setTimeout(() => {
       cameraRef.current?.setCamera({
         centerCoordinate: userCenter,
         zoomLevel: 2,
         pitch: 0,
         heading: 0,
-        animationDuration: 0, // 瞬間完成
+        animationDuration: 0,
       });
-      console.log('[Android Camera] 📹 Stage 0: 已用 setCamera 瞬間定位到', userCenter, 'zoom 2 (地球)');
-      
-      // 🎯 步驟2：同步設定 state（讓後續動畫能運作）
       setAndroidCameraCenter(userCenter);
       setAndroidCameraZoom(2);
       setAndroidCameraPitch(0);
-    }, 50); // 等待 Camera 組件 mount（跟 App 啟動一樣）
-    
-    // Stage 1: 大洲尺度（zoom 8）- 400ms 後（50 + 350ms 間隔，快速跳躍）
+    }, 50);
     setTimeout(() => {
       setAndroidCameraZoom(8);
-      console.log('[Android Camera] 📹 Stage 1: zoom 8 (大洲) [快速]');
     }, 400);
-    
-    // Stage 2: 國家尺度（zoom 13）- 950ms 後（400 + 550ms 間隔，中速）
     setTimeout(() => {
       setAndroidCameraZoom(13);
-      console.log('[Android Camera] 📹 Stage 2: zoom 13 (國家) [中速]');
     }, 950);
-    
-    // Stage 3: 城市尺度（zoom 16）- 1700ms 後（950 + 750ms 間隔，慢速）
     setTimeout(() => {
       setAndroidCameraZoom(16);
-      console.log('[Android Camera] 📹 Stage 3: zoom 16 (城市) [慢速]');
     }, 1700);
-    
-    // Stage 4: 目標街道尺度 + 傾斜 - 2700ms 後（1700 + 1000ms 間隔，很慢）
     setTimeout(() => {
       setAndroidCameraZoom(targetZoom);
       setAndroidCameraPitch(targetPitch);
-      console.log('[Android Camera] 📹 Stage 4: zoom', targetZoom, '+ pitch', targetPitch, '(街道) [很慢]');
-      
-      // 1200ms 後解鎖並釋放中心點控制
       setTimeout(() => {
-        setAndroidCameraCenter(null); // 🔓 釋放中心點控制，回到正常邏輯
-        isCameraAnimatingRef.current = false; // 🔓 解鎖 camera follow
-        console.log('[Android Camera] ✅ IDLE zoom in 完成（採集結束）');
+        setAndroidCameraCenter(null);
+        isCameraAnimatingRef.current = false;
       }, 1200);
     }, 2700);
   }, [isCollecting, currentLocation?.coords?.latitude, currentLocation?.coords?.longitude, performanceSettings.zoomLevel, viewMode]);
@@ -857,8 +696,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       const endedSessions = allSessions.filter(s => s.endTime);
       const sessions = endedSessions.slice(0, 20);
       setHistorySessions(sessions);
-      
-      console.log('[MapboxRealTimeMap] 📊 載入', sessions.length, '個歷史會話（僅用於 HISTORY 模式）');
     };
 
     loadHistorySessions();
@@ -882,35 +719,15 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       countdownOpacity.setValue(0);
       countdownScale.setValue(1);
       
-      console.log('[MapboxRealTimeMap] 🛑 採集結束，切換回導航模式');
-      setShowLabels(true); // ✅ 採集結束，切換回導航模式（導航地圖）
+      setShowLabels(true);
       // ⚠️ showLabels 改變會觸發 MapView key 變化，進而重新掛載，確保圖層順序正確
       return;
     }
 
     // ✅ 採集開始：先隱藏 3D 推車，等 321 完成後再顯示
     setCountdownComplete(false);
-    // 切換為探索模式，並觸發 MapView 重新掛載以確保圖層順序正確
-    // ⚠️ 關鍵：與採集結束時的行為一致，都通過 showLabels 改變觸發 MapView 重新掛載
-    console.log('[MapboxRealTimeMap] 🎬 採集開始，切換為探索模式');
-    console.log('[MapboxRealTimeMap] 📊 採集開始前狀態:', {
-      isCollecting: true,
-      timeTheme,
-      showLabels,
-      showLabelsWillChange: showLabels !== false, // 檢查 showLabels 是否會改變
-      currentSessionNewHexesSize: currentSessionNewHexes.size,
-      currentSessionH3GeoJsonExists: currentSessionH3GeoJson !== null,
-      currentMapViewKey: `map-${timeTheme}-${showLabels ? 'labels' : 'no-labels'}-refresh-${styleRefreshKey}`,
-    });
-    
     // 切換為探索模式（導航地圖 → 探索地圖）
-    // ⚠️ showLabels 改變會觸發 MapView key 變化，進而重新掛載，確保圖層順序正確
-    const prevShowLabels = showLabels;
     setShowLabels(false);
-    console.log('[MapboxRealTimeMap] 🗺️ 已切換為探索模式（showLabels: false），MapView 將重新掛載', {
-      showLabelsChanged: prevShowLabels !== false,
-      mapViewKeyWillChange: prevShowLabels !== false, // 只有當 showLabels 改變時，MapView key 才會改變
-    });
     
     // 立即開始倒數動畫（3 -> 2 -> 1 -> 結束）
     let currentCount = 3;
@@ -960,7 +777,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         setCountdownComplete(true);
         countdownOpacity.setValue(0);
         countdownScale.setValue(1);
-        console.log('[MapboxRealTimeMap] ✅ 倒數動畫結束，採集開始');
         onCountdownComplete?.();
         return;
       }
@@ -1038,22 +854,12 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       
       // ✅ 如果任意兩個連續點之間距離超過 200m，視為損壞的會話
       if (maxJump > 200) {
-        console.warn('[驗證] ⚠️ 發現損壞會話（最大跳躍:', maxJump.toFixed(1), 'm）:', {
-          sessionId: session.sessionId,
-          points: session.points.length,
-          startTime: new Date(session.startTime).toLocaleString(),
-        });
         return false; // 丟棄這個會話
       }
       
       return true;
     });
     
-    console.log('[驗證] 會話過濾結果:', {
-      原始會話數: allHistorySessions.length,
-      有效會話數: validSessions.length,
-      已過濾損壞會話: allHistorySessions.length - validSessions.length,
-    });
     
     // 從有效會話提取所有 H3
     const sessionH3s = new Set<string>();
@@ -1073,18 +879,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     // 檢查 exploredHexes 和 sessionH3s 的一致性
     const missingInExplored = Array.from(sessionH3s).filter(h3 => !exploredHexes.has(h3));
     
-    console.log('[驗證] 數據一致性檢查:', {
-      exploredHexesCount: exploredHexes.size,
-      sessionH3sCount: sessionH3s.size,
-      missingInExplored: missingInExplored.length,
-    });
     
     // ✅ 自動修復：如果 historySessions 有 H3 但 exploredHexes 沒有，自動補上
     if (missingInExplored.length > 0) {
-      console.warn('[驗證] ⚠️ 發現數據不一致，自動修復中...', {
-        count: missingInExplored.length,
-        samples: missingInExplored.slice(0, 5),
-      });
       
       // 合併缺失的 H3 到 exploredHexes
       const repairedHexes = new Set(exploredHexes);
@@ -1093,13 +890,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       // 更新 sessionStore
       useSessionStore.setState({ exploredHexes: repairedHexes });
       
-      console.log('[驗證] ✅ 數據已修復:', {
-        before: exploredHexes.size,
-        after: repairedHexes.size,
-        added: missingInExplored.length,
-      });
     } else {
-      console.log('[驗證] ✅ 數據一致性正常');
     }
   }, [exploredHexes]);
 
@@ -1108,8 +899,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const diagnoseSessions = useCallback(() => {
     const allSessions = gpsHistoryService.getAllSessions();
     
-    console.log('===== 🔍 會話數據診斷 =====');
-    console.log(`總會話數: ${allSessions.length}`);
     
     let suspiciousCount = 0;
     
@@ -1143,28 +932,14 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         suspiciousCount++;
       }
       
-      console.log(`會話 #${index + 1}:`, {
-        id: session.sessionId,
-        開始時間: new Date(session.startTime).toLocaleString(),
-        正常結束: hasEnd,
-        GPS點數: pointCount,
-        平均點間距: `${avgDistance.toFixed(1)}m`,
-        最大跳躍: `${maxJump.toFixed(1)}m`,
-        '🚨 可疑': isSuspicious,
-      });
     });
     
-    console.log('===== 診斷總結 =====');
-    console.log(`可疑會話數: ${suspiciousCount} / ${allSessions.length}`);
-    console.log('建議: 如果發現可疑會話，請調用 gpsHistoryService.clearHistory() 清空數據重新開始');
-    console.log('===================');
   }, []);
 
   // ⭐ 開發模式：暴露診斷函數到全局（方便調試）
   useEffect(() => {
     if (__DEV__) {
       (global as any).diagnoseSessions = diagnoseSessions;
-      console.log('[MapboxRealTimeMap] 💡 診斷函數已掛載到 global.diagnoseSessions()');
     }
   }, [diagnoseSessions]);
 
@@ -1202,9 +977,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     // 延遲啟用，確保地圖完全加載
     const timer = setTimeout(() => {
       setIs3DModelReady(true);
-      console.log('[3D Model] ✅ 3D 模型已準備（使用簡化後的 GLB）');
-      console.log('[3D Model] 📍 URL:', modelUrl);
-      console.log('[3D Model] 🎮 開始加載模型...');
     }, 1500);
     
     return () => clearTimeout(timer);
@@ -1250,11 +1022,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       // 隨機採樣，保留最近的 H3（優先保留）
       const sortedHexes = hexesToRender.slice(-performanceSettings.maxH3Features);
       hexesToRender = sortedHexes;
-      console.log('[Performance] 🔧 限制 H3 渲染數量:', {
-        original: exploredHexes.size,
-        limited: hexesToRender.length,
-        performanceLevel,
-      });
     }
     
     const limitedHexes = new Set(hexesToRender);
@@ -1272,14 +1039,7 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     // ✅ Debug: 確認 GeoJSON 已生成
     if (result) {
       const stats = getH3GeoJsonStats(result);
-      console.log('[MapboxRealTimeMap] ✅ historyH3GeoJson 已生成（基於 exploredHexes）:', {
-        hexesCount: limitedHexes.size,
-        featuresCount: result.features.length,
-        stats,
-        performanceLevel,
-      });
     } else {
-      console.log('[MapboxRealTimeMap] ⚠️ historyH3GeoJson 為空（exploredHexes.size =', limitedHexes.size, '）');
     }
     
     return result;
@@ -1287,11 +1047,16 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
 
   // 當前會話 H3 GeoJSON
   const currentSessionH3GeoJson = useMemo(() => {
+    console.log('[🎨 MapboxMap] 重新計算 currentSessionH3GeoJson', {
+      isCollecting,
+      currentSessionNewHexesSize: currentSessionNewHexes.size,
+      hexes: Array.from(currentSessionNewHexes).slice(0, 5), // 只顯示前 5 個
+    });
+
     if (!isCollecting || currentSessionNewHexes.size === 0) {
-      console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 狀態:', {
+      console.log('[⚠️ MapboxMap] currentSessionH3GeoJson 返回 null', {
         isCollecting,
-        currentSessionNewHexesSize: currentSessionNewHexes.size,
-        result: 'null (未生成)',
+        size: currentSessionNewHexes.size,
       });
       return null;
     }
@@ -1302,7 +1067,10 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     hexArray.forEach(h3Index => {
       try {
         const coord = h3ToLatLng(h3Index);
-        if (!coord) return;
+        if (!coord) {
+          console.warn('[⚠️ MapboxMap] h3ToLatLng 返回 null', { h3Index });
+          return;
+        }
 
         const { latitude: lat, longitude: lng } = coord;
         // ✅ 增加邊數（從 8 改為 16），讓圓形更圓滑
@@ -1317,16 +1085,12 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           },
         });
       } catch (error) {
-        // 忽略錯誤
+        console.error('[❌ MapboxMap] 處理 H3 時出錯', { h3Index, error });
       }
     });
 
     if (features.length === 0) {
-      console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 狀態:', {
-        isCollecting,
-        currentSessionNewHexesSize: currentSessionNewHexes.size,
-        result: 'null (features 為空)',
-      });
+      console.warn('[⚠️ MapboxMap] features 為空，返回 null');
       return null;
     }
 
@@ -1335,11 +1099,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       features,
     };
     
-    console.log('[MapboxRealTimeMap] 📊 currentSessionH3GeoJson 已生成:', {
-      isCollecting,
-      currentSessionNewHexesSize: currentSessionNewHexes.size,
+    console.log('[✅ MapboxMap] currentSessionH3GeoJson 生成成功', {
       featuresCount: features.length,
-      result: 'GeoJSON 已生成',
     });
 
     return result;
@@ -1348,13 +1109,11 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   // GPS Trail GeoJSON - 即時更新的路徑軌跡（延遲兩個點，避免覆蓋游標）
   const gpsTrailGeoJson = useMemo(() => {
     if (!isCollecting || !gpsHistoryService.isSessionActive()) {
-      console.log('[MapboxRealTimeMap] GPS Trail 未顯示：isCollecting =', isCollecting);
       return null;
     }
 
     const currentSessionPoints = gpsHistoryService.getCurrentSessionTrail();
     if (!currentSessionPoints || currentSessionPoints.length < 4) {
-      console.log('[MapboxRealTimeMap] GPS Trail 點數不足（需要至少 4 個點）:', currentSessionPoints?.length || 0);
       return null;
     }
 
@@ -1363,12 +1122,10 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     const trailPoints = currentSessionPoints.slice(0, -2);
     
     if (trailPoints.length < 2) {
-      console.log('[MapboxRealTimeMap] GPS Trail 延遲後點數不足:', trailPoints.length);
       return null; // 至少需要 2 個點才能畫線
     }
 
     const coordinates = trailPoints.map(point => [point.longitude, point.latitude]);
-    console.log('[MapboxRealTimeMap] 🔥 GPS Trail 更新:', coordinates.length, '個點（延遲 2 個點）');
 
     return {
       type: 'FeatureCollection',
@@ -1387,11 +1144,9 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   const userModelGeoJson = useMemo(() => {
     // 只在遊戲模式且有位置時顯示
     if (actualMapMode !== 'GAME') {
-      console.log('[3D Model] ⚠️ userModelGeoJson: actualMapMode =', actualMapMode, '不是 GAME');
       return null;
     }
     if (!is3DModelReady) {
-      console.log('[3D Model] ⚠️ userModelGeoJson: is3DModelReady =', is3DModelReady);
       return null;
     }
 
@@ -1409,7 +1164,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
       : testLocation;
 
     if (!currentLocation) {
-      console.log('[3D Model] 🧪 測試模式：使用固定位置', testLocation);
     }
 
     const geoJson = {
@@ -1436,7 +1190,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
     if (__DEV__) {
       const n = (userModelLogCountRef.current += 1);
       if (n % 10 === 1) {
-        console.log('[3D Model] userModelGeoJson', geoJson.features[0].geometry.coordinates, 'rot', geoJson.features[0].properties.rotation);
       }
     }
     return geoJson;
@@ -1462,20 +1215,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
   
   useEffect(() => {
     if (prevMapViewKeyRef.current !== mapViewKey) {
-      console.log('[MapboxRealTimeMap] 🔑 MapView key 變化:', {
-        before: prevMapViewKeyRef.current,
-        after: mapViewKey,
-        willRemount: true,
-        currentSessionNewHexesSize: currentSessionNewHexes.size,
-        currentSessionH3GeoJsonExists: currentSessionH3GeoJson !== null,
-        currentSessionH3GeoJsonFeatures: currentSessionH3GeoJson?.features?.length || 0,
-        userModelGeoJsonExists: !!userModelGeoJson,
-        is3DModelReady,
-        isCollecting,
-        timeTheme,
-        showLabels,
-        styleRefreshKey,
-      });
       prevMapViewKeyRef.current = mapViewKey;
     }
   }, [mapViewKey, currentSessionNewHexes.size, currentSessionH3GeoJson, userModelGeoJson, is3DModelReady, isCollecting, timeTheme, showLabels, styleRefreshKey]);
@@ -1518,10 +1257,8 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
               'user-avatar-model': modelUrl, // ✅ 殺手三修復：直接使用 https:// URL，不用本地文件
             }}
             onPress={(e) => {
-              console.log('[3D Model] 🎯 模型被點擊:', e);
             }}
             onError={(error) => {
-              console.error('[3D Model] ❌ Models 組件錯誤:', error);
             }}
           />
         )}
@@ -1551,7 +1288,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
         <Mapbox.Images
           images={{ seven_eleven_icon: SEVEN_ELEVEN_ICON }}
           onImageMissing={(imageKey) => {
-            console.error('[Mapbox] ❌ 圖標遺失:', imageKey);
           }}
         />
 
@@ -1646,24 +1382,21 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
           const shouldRender = isCollecting; // ✅ 採集中時總是渲染，即使內容為空
           const hasData = currentSessionH3GeoJson !== null;
           
-          if (shouldRender) {
-            console.log('[MapboxRealTimeMap] 🎨 渲染 Current H3 圖層:', {
-              layerId: 'current-h3-stroke',
-              lineSortKey: 5,
-              featuresCount: currentSessionH3GeoJson?.features?.length || 0,
-              hasData,
-              isCollecting,
-              timeTheme,
-            });
-          }
-          
           // ✅ 採集中時總是渲染圖層（即使內容為空），確保圖層註冊順序一致
           // ⚠️ 當 currentSessionH3GeoJson 為 null 時，使用空的 FeatureCollection 確保圖層始終存在
           const emptyGeoJson: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+          const shapeData = hasData ? currentSessionH3GeoJson! : emptyGeoJson;
+          
+          // ⭐ Android 修復：添加動態 key 強制重新渲染（每次 currentSessionNewHexes 變化時）
+          const shapeSourceKey = Platform.OS === 'android' 
+            ? `current-h3-${currentSessionNewHexes.size}`
+            : 'current-h3';
+          
           return shouldRender ? (
             <Mapbox.ShapeSource 
+              key={shapeSourceKey}
               id="current-h3" 
-              shape={hasData ? currentSessionH3GeoJson! : emptyGeoJson}
+              shape={shapeData}
             >
               {/* ⚠️ 不渲染 fill layer，避免覆蓋 user marker */}
               {/* 外框：活力橙虛線 */}
@@ -1746,7 +1479,6 @@ export const MapboxRealTimeMap = React.forwardRef<MapboxRealTimeMapRef, MapboxRe
             id="user-3d-model-source" 
             shape={userModelGeoJson}
             onPress={(e) => {
-              console.log('[3D Model] 🎯 ShapeSource 被點擊:', e);
             }}
           >
             <Mapbox.ModelLayer

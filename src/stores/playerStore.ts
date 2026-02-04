@@ -222,7 +222,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         isImmobilized: true,
         maxWeight: 0, // 強制設置容量為 0
       });
-      console.warn('[PlayerStore] Zero Tolerance: Backpack Collapse! Durability = 0, User immobilized');
     } else if (calculatedCapacity > 0 && state.isImmobilized) {
       // 如果容量恢復，解除定身狀態
       set({
@@ -239,7 +238,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Stamina = 0 → Ghost Mode
     if (state.stamina === ZERO_TOLERANCE.STAMINA_THRESHOLD && !state.isGhost) {
       set({ isGhost: true });
-      console.warn('[PlayerStore] Ghost Mode activated: Stamina = 0');
     } else if (state.stamina > ZERO_TOLERANCE.STAMINA_THRESHOLD && state.isGhost) {
       // 如果體力恢復，解除 Ghost Mode
       set({ isGhost: false });

@@ -18,9 +18,7 @@ export const SpeedIcon: React.FC<SpeedIconProps> = React.memo(({ size = 36 }) =>
       source={imageSource}
       style={[styles.icon, { width: size, height: size }]}
       resizeMode="contain"
-      onError={(error) => {
-        console.warn('[SpeedIcon] 圖片加載失敗:', error);
-      }}
+      onError={() => {}}
     />
   );
 });

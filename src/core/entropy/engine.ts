@@ -80,6 +80,14 @@ class EntropyEngine {
    * @returns 熵計算結果
    */
   processMovement(input: MovementInput): EntropyResult {
+    console.log('[🎮 EntropyEngine] processMovement 被調用', {
+      distance: input.distance,
+      speed: input.speed,
+      hasGPS: !!input.gpsLocation,
+      latitude: input.gpsLocation?.latitude,
+      longitude: input.gpsLocation?.longitude,
+    });
+
     // 1. 驗證輸入數據
     this.validateInput(input);
 
@@ -117,7 +125,17 @@ class EntropyEngine {
 
     // 3. 累積距離到 pendingDistance
     // GPS 更新是細粒度的（例如 0.02km, 0.05km），需要累積
+    const beforeDistance = this.pendingDistance;
     this.pendingDistance += input.distance;
+    const needMore = Math.max(0, 0.1 - this.pendingDistance);
+    console.log('[📏 EntropyEngine] 累積距離', {
+      before: beforeDistance.toFixed(4),
+      added: input.distance.toFixed(4),
+      after: this.pendingDistance.toFixed(4),
+      needMoreKm: needMore.toFixed(4),
+      needMoreM: (needMore * 1000).toFixed(1) + 'm',
+      willTrigger: this.pendingDistance >= 0.1,
+    });
 
     // 3.1 計算並記錄耐久度債務（在拾取循環之前）
     // 使用「工業強化」數學模型：decay = distance × (1 + (currentWeight × 0.15)) × 0.1
@@ -175,6 +193,11 @@ class EntropyEngine {
       this.pendingDistance -= LOOT_TRIGGER_DISTANCE;
       lootEventsCount++;
 
+      console.log('[🎲 EntropyEngine] 觸發拾取事件', {
+        lootEventsCount,
+        remainingDistance: this.pendingDistance,
+      });
+
       // 觸發拾取邏輯，並累積體力變化（Step B: Loot Loop）
       // 如果指定了 forceLootTier，強制生成該階層的物品（調試用）
       const forceTier = input.forceLootTier;
@@ -183,6 +206,11 @@ class EntropyEngine {
       
       // 累積拾取事件的體力變化
       totalStaminaChange += lootStaminaChange;
+      
+      console.log('[💰 EntropyEngine] 拾取事件完成', {
+        lootStaminaChange,
+        totalLootStaminaChange,
+      });
     }
     
     // 5.1 累積移動消耗（Step A: Move）
@@ -339,11 +367,20 @@ class EntropyEngine {
    * @returns 體力變化值（正數為增加，負數為減少）
    */
   private processLootEvent(timestamp: number, forceTier?: 1 | 2 | 3): number {
+    console.log('[🎁 EntropyEngine] processLootEvent 開始', {
+      forceTier,
+      timestamp,
+    });
+
     const playerState = usePlayerStore.getState();
     const inventoryStore = useInventoryStore.getState();
 
     // 檢查是否處於 Ghost Mode 或 Immobilized
     if (playerState.isGhost || playerState.isImmobilized) {
+      console.log('[👻 EntropyEngine] Ghost Mode 或 Immobilized，跳過拾取', {
+        isGhost: playerState.isGhost,
+        isImmobilized: playerState.isImmobilized,
+      });
       this.emitEvent({
         type: 'loot_failed',
         data: {
@@ -360,6 +397,7 @@ class EntropyEngine {
     // 如果指定了 forceTier（調試用），強制使用該階層
     // 否則使用 RNG（85/14/1 分布）
     const tier = forceTier !== undefined ? forceTier : this.rollItemTier();
+    console.log('[🎲 EntropyEngine] 決定物品階層', { tier, forceTier });
 
     // 2. 創建物品對象
     const item: Item = {
@@ -371,9 +409,21 @@ class EntropyEngine {
       timestamp,
       restoreStamina: ITEM_CONSUME_RESTORE[`T${tier}` as 'T1' | 'T2' | 'T3'],
     };
+    console.log('[📦 EntropyEngine] 創建物品', {
+      tier,
+      weight: item.weight,
+      value: item.value,
+      pickupCost: item.pickupCost,
+    });
 
     // 3. 檢查是否可以拾取
     const canPickup = inventoryStore.canPickup(item);
+    console.log('[✅ EntropyEngine] 檢查是否可以拾取', {
+      canPickup,
+      currentWeight: inventoryStore.totalWeight,
+      effectiveMaxWeight: playerState.getEffectiveMaxWeight(),
+      stamina: playerState.stamina,
+    });
 
     if (canPickup) {
       // 4. 成功拾取

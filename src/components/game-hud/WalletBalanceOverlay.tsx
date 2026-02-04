@@ -41,9 +41,7 @@ export const WalletBalanceOverlay: React.FC<WalletBalanceOverlayProps> = React.m
             source={require('../../../assets/images/soil_token_icon.png')}
             style={styles.tokenIcon}
             resizeMode="contain"
-            onError={(error) => {
-              console.warn('[WalletBalanceOverlay] $SOIL 圖標加載失敗，使用預設圖標:', error);
-            }}
+            onError={() => {}}
           />
           {/* 備用：如果圖片加載失敗，顯示葉子圖標 */}
           {/* <Ionicons name="leaf-outline" size={24} color="rgba(139, 195, 74, 0.9)" /> */}

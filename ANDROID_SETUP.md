@@ -50,6 +50,18 @@ export PATH=$PATH:$ANDROID_HOME/tools/bin
 source ~/.zshrc
 ```
 
+#### 步骤 2.5：让 Android Studio 能找到 Node（使用 nvm/fnm 时必做）
+
+Android Studio 不会加载 `~/.zshrc`，所以 Gradle 和 Expo 插件会报错：**A problem occurred starting process 'command 'node''**。
+
+在终端执行（只需做一次）：
+
+```bash
+./scripts/ensure-node-on-path.sh
+```
+
+按提示输入密码后，`node` 会链接到 `/usr/local/bin/node`，Android Studio 即可找到。然后重新在 Android Studio 中 **Sync Project with Gradle Files**。
+
 #### 步骤 3：验证安装
 
 ```bash
@@ -111,3 +123,6 @@ A: 确保 `platform-tools` 在 PATH 中
 
 ### Q: 想快速测试，不想安装 Android Studio？
 A: 使用 Expo Go，在 Android 设备上安装 Expo Go app 即可
+
+### Q: 报错 "A problem occurred starting process 'command ''node''" 或 "Failed to apply plugin 'expo-autolinking-settings'"？
+A: 使用 nvm/fnm 时，Android Studio 的 PATH 里没有 node。在终端执行一次：`./scripts/ensure-node-on-path.sh`（会要求输入密码），然后重新 Sync Gradle。

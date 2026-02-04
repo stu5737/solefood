@@ -60,11 +60,9 @@ class BackgroundTrackingNotificationService {
       const isNowForeground = nextAppState === 'active';
       
       if (wasBackground && isNowForeground) {
-        console.log('🟢 [BG-Notification] App entered FOREGROUND - Stopped notifications');
         this.stopNotifications();
         this.backgroundPointCount = 0;
       } else if (nextAppState.match(/inactive|background/) && this.isTracking) {
-        console.log('🔴 [BG-Notification] App entered BACKGROUND - Starting notifications');
         this.startNotifications();
       }
       
@@ -83,15 +81,8 @@ class BackgroundTrackingNotificationService {
     
     try {
       const { status } = await Notifications.requestPermissionsAsync();
-      if (status === 'granted') {
-        console.log('[BG-Notification] Notification permissions granted');
-        return true;
-      } else {
-        console.warn('[BG-Notification] Notification permissions denied');
-        return false;
-      }
-    } catch (error) {
-      console.warn('[BG-Notification] Failed to request notification permissions:', error);
+      return status === 'granted';
+    } catch {
       return false;
     }
   }
@@ -143,20 +134,7 @@ class BackgroundTrackingNotificationService {
    * 開始發送通知（在背景模式下）
    */
   private startNotifications(): void {
-    // 嘗試載入通知模組
-    if (!loadNotificationsModule()) {
-      // Expo Go 中不可用，但背景追蹤仍會運作
-      console.log('[BG-Notification] Notifications not available (Expo Go limitation). Background tracking will still work.');
-      return;
-    }
-    
-    // 先請求權限
-    this.requestPermissions();
-    
-    // 每 30 秒發送一次通知（顯示背景定位正在工作）
-    this.notificationInterval = setInterval(async () => {
-      await this.sendNotification();
-    }, 30000); // 30 秒
+    // 通知已停用，不再發送
   }
 
   /**
@@ -173,38 +151,14 @@ class BackgroundTrackingNotificationService {
    * 發送通知
    */
   private async sendNotification(): Promise<void> {
-    // 嘗試載入通知模組
-    if (!loadNotificationsModule()) {
-      // 在 Expo Go 中，只記錄日誌，不發送通知
-      console.log(`[BG-Notification] Background tracking active: ${this.backgroundPointCount} GPS points recorded (notifications unavailable in Expo Go)`);
-      return;
-    }
-    
-    try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '📍 背景定位運作中',
-          body: `已記錄 ${this.backgroundPointCount} 個 GPS 點`,
-          data: { pointCount: this.backgroundPointCount },
-        },
-        trigger: null, // 立即發送
-      });
-    } catch (error) {
-      console.warn('[BG-Notification] Failed to send notification:', error);
-    }
+    // 通知已停用
   }
 
   /**
    * 發送測試通知
    */
   async sendTestNotification(): Promise<void> {
-    if (!loadNotificationsModule()) {
-      console.warn('[BG-Notification] Notifications not available (Expo Go limitation)');
-      return;
-    }
-    
-    await this.requestPermissions();
-    await this.sendNotification();
+    // 通知已停用
   }
   
   /**

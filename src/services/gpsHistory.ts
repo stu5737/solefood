@@ -68,7 +68,6 @@ class GPSHistoryService {
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
-      console.log('[GPSHistoryService] Already initialized, skipping...');
       return;
     }
 
@@ -77,38 +76,28 @@ class GPSHistoryService {
       const savedHistory = await loadData<GPSHistoryPoint[]>(STORAGE_KEYS.GPS_HISTORY);
       
       if (savedHistory === null) {
-        console.warn('[GPSHistoryService] ⚠️  No saved history found in storage');
         this.history = [];
       } else if (!Array.isArray(savedHistory)) {
-        console.error('[GPSHistoryService] ❌ Saved history is not an array:', typeof savedHistory);
         this.history = [];
       } else {
-        console.log(`[GPSHistoryService] 📦 Loaded ${savedHistory.length} total history points from storage`);
         const sevenDaysAgo = Date.now() - (this.HISTORY_DAYS * 24 * 60 * 60 * 1000);
         this.history = savedHistory.filter(point => point.timestamp >= sevenDaysAgo);
-        console.log(`[GPSHistoryService] ✅ Loaded ${this.history.length} history points (last 7 days)`);
       }
       
       // ⭐ 修復：載入會話記錄，添加詳細日誌
       const savedSessions = await loadData<CollectionSession[]>(STORAGE_KEYS.GPS_SESSIONS);
       
       if (savedSessions === null) {
-        console.warn('[GPSHistoryService] ⚠️  No saved sessions found in storage');
         this.sessions.clear();
       } else if (!Array.isArray(savedSessions)) {
-        console.error('[GPSHistoryService] ❌ Saved sessions is not an array:', typeof savedSessions);
         this.sessions.clear();
       } else {
-        console.log(`[GPSHistoryService] 📦 Loaded ${savedSessions.length} total sessions from storage`);
         const sevenDaysAgo = Date.now() - (this.HISTORY_DAYS * 24 * 60 * 60 * 1000);
-        let loadedCount = 0;
         savedSessions
           .filter(session => session.startTime >= sevenDaysAgo)
           .forEach(session => {
             this.sessions.set(session.sessionId, session);
-            loadedCount++;
           });
-        console.log(`[GPSHistoryService] ✅ Loaded ${loadedCount} collection sessions (last 7 days)`);
       }
       
       // 確保 appState 有初始值（在設置監聽器之前）
@@ -123,16 +112,12 @@ class GPSHistoryService {
         const isNowBackground = nextAppState.match(/inactive|background/);
         
         if (wasBackground && isNowForeground) {
-          console.log(`🟢 [GPSHistoryService] App entered FOREGROUND - Background points recorded: ${this.backgroundPointCount}`);
           this.backgroundPointCount = 0;
         } else if (isNowBackground) {
-          // ⭐ 關鍵修復：進入背景時強制保存
-          console.log(`🔴 [GPSHistoryService] App entering BACKGROUND - Force saving data...`);
           try {
             await this.forceSave();
-            console.log(`✅ [GPSHistoryService] Data saved successfully before background`);
-          } catch (error) {
-            console.error(`❌ [GPSHistoryService] Failed to save before background:`, error);
+          } catch {
+            // 靜默忽略
           }
         }
         
@@ -142,10 +127,7 @@ class GPSHistoryService {
       // ⭐ 新增：每 30 秒自動保存一次（防止數據丟失）
       this.saveInterval = setInterval(() => {
         if (this.currentSessionId || this.history.length > 0 || this.sessions.size > 0) {
-          this.forceSave().catch((error) => {
-            console.error('[GPSHistoryService] Periodic save failed:', error);
-          });
-          console.log('[GPSHistoryService] ⏰ Periodic save triggered');
+          this.forceSave().catch(() => {});
         }
       }, 30000); // 30 秒
       
@@ -160,11 +142,6 @@ class GPSHistoryService {
           const inactiveDuration = now - lastActive;
           
           if (inactiveDuration > ONE_HOUR) {
-            console.warn('[GPSHistoryService] 🧹 清理僵尸會話:', {
-              id: session.sessionId,
-              不活躍時長: `${(inactiveDuration / 1000 / 60).toFixed(0)}分鐘`,
-              開始時間: new Date(session.startTime).toLocaleString(),
-            });
             this.sessions.delete(session.sessionId);
             zombieCount++;
           }
@@ -172,22 +149,15 @@ class GPSHistoryService {
       });
       
       if (zombieCount > 0) {
-        console.log(`[GPSHistoryService] ✅ 清理了 ${zombieCount} 個僵尸會話`);
-        // 立即保存清理後的數據
         await this.saveSessions();
       }
       
       this.initialized = true;
-      console.log('[GPSHistoryService] ✅ Initialization completed successfully');
-    } catch (error) {
-      console.error('[GPSHistoryService] ❌ Failed to initialize:', error);
-      // 即使失敗也確保 appState 有值
+    } catch {
       if (!this.appState) {
         this.appState = AppState.currentState;
       }
-      // ⭐ 關鍵：即使失敗也標記為已初始化，避免無限重試
       this.initialized = true;
-      console.log('[GPSHistoryService] ⚠️  Marked as initialized despite errors');
     }
   }
 
@@ -201,8 +171,7 @@ class GPSHistoryService {
   async startSession(): Promise<string> {
     // ⭐ 防崩潰修復 1：如果已有活躍會話，先結束它（防止會話堆積）
     if (this.currentSessionId) {
-      console.warn('[GPSHistoryService] ⚠️  發現殘留的會話，先清理:', this.currentSessionId);
-      await this.endSession('manual'); // 使用 'manual' 標記為手動清理
+      await this.endSession('manual');
     }
     
     // ⭐ 防崩潰修復 2：確保 currentSessionPoints 為空陣列（防止資料疊加）
@@ -219,7 +188,6 @@ class GPSHistoryService {
     };
     
     this.sessions.set(sessionId, session);
-    console.log('[GPSHistoryService] ✅ Started new collection session:', sessionId);
     return sessionId;
   }
 
@@ -234,15 +202,12 @@ class GPSHistoryService {
   async endSession(endType: 'picnic' | 'unload' | 'manual'): Promise<void> {
     // ⭐ 防重複調用檢查：如果沒有活動會話，直接返回
     if (!this.currentSessionId) {
-      console.log('[GPSHistoryService] ⚠️ No active session to end, skipping... (可能已被結束)');
       return;
     }
 
     // ⭐ 立即保存並清空 currentSessionId，防止重複調用
     const sessionId = this.currentSessionId;
     this.currentSessionId = null;
-    
-    console.log(`[GPSHistoryService] 🔄 Ending session: ${sessionId}, type: ${endType}`);
 
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -255,8 +220,6 @@ class GPSHistoryService {
       session.totalDistance = this.currentSessionPoints.reduce((sum, point) => {
         return sum + (point.distance || 0);
       }, 0);
-      
-      console.log(`[GPSHistoryService] ✅ Ended session ${sessionId}, type: ${endType}, distance: ${session.totalDistance.toFixed(2)}km, duration: ${session.duration.toFixed(0)}s, points: ${session.points.length}`);
       
       // ⭐ 修復：確保會話的點都被加入 history（用於 H3 渲染）
       if (session.points.length > 0) {
@@ -281,8 +244,6 @@ class GPSHistoryService {
         }
         
         if (addedCount > 0) {
-          console.log(`[GPSHistoryService] ✅ Added ${addedCount} points from session to history`);
-          
           // 清理超過7天的歷史
           this.history = this.history.filter(p => p.timestamp >= sevenDaysAgo);
           
@@ -298,7 +259,6 @@ class GPSHistoryService {
         const oldestSessionId = Array.from(this.sessions.entries())
           .sort((a, b) => a[1].startTime - b[1].startTime)[0][0];
         this.sessions.delete(oldestSessionId);
-        console.log(`[GPSHistoryService] Removed oldest session: ${oldestSessionId}`);
       }
       
       this.saveSessions();
@@ -310,28 +270,21 @@ class GPSHistoryService {
       const store = useSessionStore.getState();
       if (store.mergeCurrentSessionHexes) {
         await store.mergeCurrentSessionHexes();
-        console.log('[GPSHistoryService] ✅ Merged current session new hexes into exploredHexes');
       }
-    } catch (error) {
-      console.warn('[GPSHistoryService] Failed to merge current session hexes:', error);
+    } catch {
+      // 靜默忽略
     }
 
     // ⭐ 關鍵修復：結束會話時立即強制保存
     try {
       await this.forceSave();
-      console.log('[GPSHistoryService] ✅ Force saved after session end');
-    } catch (error) {
-      console.error('[GPSHistoryService] ❌ Failed to force save after session end:', error);
+    } catch {
+      // 靜默忽略
     }
 
-    // ⭐ 防崩潰修復：清理會話點數據（currentSessionId 已在方法開頭清空）
     this.currentSessionPoints = [];
-    
-    // ✅ 清除 GPS 過濾緩衝區（新會話需要重新建立平滑化窗口）
     this.locationBuffer = [];
     this.lastValidLocation = null;
-    
-    console.log('[GPSHistoryService] 🧹 會話狀態已完全清理（包含 GPS 過濾緩衝區）');
   }
 
   /**
@@ -348,8 +301,7 @@ class GPSHistoryService {
   addPoint(location: LocationData, distance: number = 0): void {
     // 確保已初始化
     if (!this.initialized) {
-      console.warn('[GPSHistoryService] Not initialized, initializing now...');
-      this.initialize().catch(console.error);
+      this.initialize().catch(() => {});
     }
 
     // 如果沒有活動會話，不記錄點
@@ -368,7 +320,6 @@ class GPSHistoryService {
     // 檢查 GPS 精度，如果誤差超過 40m，這數據完全不可信（室內或高樓反射）
     const accuracy = location.accuracy || 0;
     if (accuracy > this.MAX_ACCURACY_THRESHOLD) {
-      console.log(`[GPS Filter] ❌ 第一層過濾：精度不足 (accuracy=${accuracy.toFixed(1)}m > ${this.MAX_ACCURACY_THRESHOLD}m)，丟棄`);
       return;
     }
 
@@ -390,7 +341,6 @@ class GPSHistoryService {
         
         // 如果速度超過 10 m/s (36 km/h) 且距離超過 50m，視為異常飄移
         if (speed > this.MAX_SPEED_THRESHOLD && distMeters > this.MAX_JUMP_DISTANCE) {
-          console.log(`[GPS Filter] ❌ 第二層過濾：速度異常 (speed=${speed.toFixed(1)}m/s = ${(speed * 3.6).toFixed(1)}km/h, dist=${distMeters.toFixed(1)}m)，丟棄`);
           return;
         }
       }
@@ -429,11 +379,6 @@ class GPSHistoryService {
       timestamp: location.timestamp,
     };
     
-    // 如果是第一個點，輸出平滑化啟動訊息
-    if (this.currentSessionPoints.length === 0) {
-      console.log(`[GPS Filter] ✅ 三層過濾啟動：精度閾值=${this.MAX_ACCURACY_THRESHOLD}m, 速度閾值=${(this.MAX_SPEED_THRESHOLD * 3.6).toFixed(1)}km/h, 平滑窗口=${this.SMOOTHING_BUFFER_SIZE}點`);
-    }
-    
     // 計算與平滑後上一點的距離（用於距離過濾）
     let smoothedDistance = 0;
     if (this.currentSessionPoints.length > 0) {
@@ -459,11 +404,6 @@ class GPSHistoryService {
     const isBackground = this.appState && this.appState.match(/inactive|background/);
     if (isBackground) {
       this.backgroundPointCount++;
-      // 每 20 個背景點記錄一次日誌
-      if (this.backgroundPointCount % 20 === 0 || this.backgroundPointCount === 1) {
-        const timeStr = new Date(location.timestamp).toLocaleTimeString();
-        console.log(`📝 [BG-Record] ${timeStr} | Recorded GPS point #${this.backgroundPointCount} | Session: ${this.currentSessionId} | Total points: ${this.currentSessionPoints.length + 1}`);
-      }
     }
 
     // 使用平滑後的座標創建點
@@ -485,7 +425,6 @@ class GPSHistoryService {
     
     // ⭐ 如果會話點數超過限制，只保留最新的點
     if (this.currentSessionPoints.length > MAX_SESSION_POINTS) {
-      console.warn(`[GPSHistoryService] ⚠️  會話點數超過限制 (${this.currentSessionPoints.length} > ${MAX_SESSION_POINTS})，只保留最新 ${MAX_SESSION_POINTS} 個點`);
       this.currentSessionPoints = this.currentSessionPoints.slice(-MAX_SESSION_POINTS);
     }
     
@@ -497,7 +436,6 @@ class GPSHistoryService {
       
       // ⭐ 防崩潰修復 4：限制會話記錄中的點數（防止渲染崩潰）
       if (session.points.length > MAX_SESSION_POINTS) {
-        console.warn(`[GPSHistoryService] ⚠️  會話記錄點數超過限制，只保留最新 ${MAX_SESSION_POINTS} 個點`);
         session.points = session.points.slice(-MAX_SESSION_POINTS);
       }
     }
@@ -626,8 +564,6 @@ class GPSHistoryService {
    * 清除歷史（調試用）
    */
   async clearHistory(): Promise<void> {
-    console.log('[GPSHistoryService] 🗑️ Clearing all history and sessions...');
-    
     // 1. 清除內存數據
     this.history = [];
     this.sessions.clear();
@@ -643,15 +579,7 @@ class GPSHistoryService {
     await saveData(STORAGE_KEYS.GPS_HISTORY, []);
     await saveData(STORAGE_KEYS.GPS_SESSIONS, []);
     
-    // 3. 等待並驗證清除成功
     await new Promise(resolve => setTimeout(resolve, 300));
-    const verifyHistory = await loadData<GPSHistoryPoint[]>(STORAGE_KEYS.GPS_HISTORY);
-    const verifySessions = await loadData<CollectionSession[]>(STORAGE_KEYS.GPS_SESSIONS);
-    
-    console.log('[GPSHistoryService] ✅ GPS history and sessions cleared', {
-      historyPoints: verifyHistory?.length || 0,
-      sessions: verifySessions?.length || 0,
-    });
   }
 
   /**
@@ -688,9 +616,7 @@ class GPSHistoryService {
     try {
       await this.saveToStorage();
       await this.saveSessions();
-      console.log('[GPSHistoryService] ✅ Force save completed');
     } catch (error) {
-      console.error('[GPSHistoryService] ❌ Force save failed:', error);
       throw error;
     }
   }
@@ -702,7 +628,6 @@ class GPSHistoryService {
     if (this.saveInterval) {
       clearInterval(this.saveInterval);
       this.saveInterval = null;
-      console.log('[GPSHistoryService] Periodic save interval cleared');
     }
   }
 
@@ -713,27 +638,9 @@ class GPSHistoryService {
   private async saveToStorage(): Promise<void> {
     try {
       const dataToSave = this.history;
-      console.log(`[GPSHistoryService] 💾 Saving ${dataToSave.length} history points to storage...`);
       await saveData(STORAGE_KEYS.GPS_HISTORY, dataToSave);
-      
-      // ⭐ 新增：驗證保存是否成功（延遲一下確保寫入完成）
-      // 注意：驗證邏輯僅用於日誌，不影響應用運行
       await new Promise(resolve => setTimeout(resolve, 200));
-      const verifyData = await loadData<GPSHistoryPoint[]>(STORAGE_KEYS.GPS_HISTORY);
-      if (verifyData && Array.isArray(verifyData)) {
-        const diff = Math.abs(verifyData.length - dataToSave.length);
-        if (diff === 0) {
-          console.log(`[GPSHistoryService] ✅ Verified: ${verifyData.length} points saved successfully`);
-        } else {
-          // 只記錄警告，不報錯（可能是並發更新或 AsyncStorage 延遲）
-          console.warn(`[GPSHistoryService] ⚠️  Verification: expected ${dataToSave.length}, got ${verifyData.length} (diff: ${diff})`);
-        }
-      } else {
-        console.warn(`[GPSHistoryService] ⚠️  Verification: data is not an array or null`);
-      }
     } catch (error) {
-      console.error('[GPSHistoryService] ❌ Failed to save GPS history:', error);
-      // ⭐ 關鍵：保存失敗時拋出異常，讓調用者知道
       throw error;
     }
   }
@@ -745,27 +652,9 @@ class GPSHistoryService {
   private async saveSessions(): Promise<void> {
     try {
       const sessionsArray = Array.from(this.sessions.values());
-      console.log(`[GPSHistoryService] 💾 Saving ${sessionsArray.length} sessions to storage...`);
       await saveData(STORAGE_KEYS.GPS_SESSIONS, sessionsArray);
-      
-      // ⭐ 新增：驗證保存是否成功（延遲一下確保寫入完成）
-      // 注意：驗證邏輯僅用於日誌，不影響應用運行
       await new Promise(resolve => setTimeout(resolve, 200));
-      const verifyData = await loadData<CollectionSession[]>(STORAGE_KEYS.GPS_SESSIONS);
-      if (verifyData && Array.isArray(verifyData)) {
-        const diff = Math.abs(verifyData.length - sessionsArray.length);
-        if (diff === 0) {
-          console.log(`[GPSHistoryService] ✅ Verified: ${verifyData.length} sessions saved successfully`);
-        } else {
-          // 只記錄警告，不報錯（可能是並發更新或 AsyncStorage 延遲）
-          console.warn(`[GPSHistoryService] ⚠️  Verification: expected ${sessionsArray.length}, got ${verifyData.length} (diff: ${diff})`);
-        }
-      } else {
-        console.warn(`[GPSHistoryService] ⚠️  Verification: data is not an array or null`);
-      }
     } catch (error) {
-      console.error('[GPSHistoryService] ❌ Failed to save GPS sessions:', error);
-      // ⭐ 關鍵：保存失敗時拋出異常，讓調用者知道
       throw error;
     }
   }
@@ -778,7 +667,6 @@ class GPSHistoryService {
     const originalSize = this.sessions.size;
     
     if (originalSize === 0) {
-      console.log('[GPSHistoryService] 🧪 No sessions to delete');
       return { before: 0, after: 0, deleted: 0 };
     }
     
@@ -808,22 +696,12 @@ class GPSHistoryService {
       await this.saveToStorage();
       await this.saveSessions();
       
-      console.log('[GPSHistoryService] 🧪 測試：隨機刪除歷史會話', {
-        原始會話數: originalSize,
-        刪除會話數: originalSize - keepCount,
-        保留會話數: keepCount,
-        當前會話數: this.sessions.size,
-        原始歷史點數: originalHistorySize,
-        當前歷史點數: this.history.length,
-      });
-      
       return {
         before: originalSize,
         after: this.sessions.size,
         deleted: originalSize - keepCount,
       };
     } catch (error) {
-      console.error('[GPSHistoryService] ❌ Failed to save after deletion:', error);
       throw error;
     }
   }

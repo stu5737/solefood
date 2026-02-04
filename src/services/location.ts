@@ -48,10 +48,7 @@ class LocationService {
       const isNowForeground = nextAppState === 'active';
       
       if (wasBackground && isNowForeground) {
-        console.log(`🟢 [LocationService] App entered FOREGROUND - Background GPS points logged: ${this.backgroundLogCounter}`);
         this.backgroundLogCounter = 0;
-      } else if (nextAppState.match(/inactive|background/)) {
-        console.log('🔴 [LocationService] App entered BACKGROUND - Location tracking should continue');
       }
       
       this.appState = nextAppState;
@@ -67,7 +64,6 @@ class LocationService {
       const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
       
       if (foregroundStatus !== 'granted') {
-        console.warn('[LocationService] Foreground location permission denied');
         return false;
       }
       
@@ -76,20 +72,14 @@ class LocationService {
         const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
         
         if (backgroundStatus !== 'granted') {
-          console.warn('[LocationService] Background location permission denied. App will only track when screen is on.');
-          // 即使背景權限被拒絕，也允許前景定位繼續
           return true;
         }
-        
-        console.log('[LocationService] Both foreground and background permissions granted');
-      } catch (backgroundError) {
-        // 某些平台可能不支持背景權限請求，記錄但不阻止前景定位
-        console.warn('[LocationService] Background permission request failed (may not be supported):', backgroundError);
+      } catch {
+        // 某些平台可能不支持背景權限請求
       }
       
       return true;
-    } catch (error) {
-      console.error('[LocationService] Failed to request permissions:', error);
+    } catch {
       return false;
     }
   }
@@ -101,8 +91,7 @@ class LocationService {
     try {
       const { status } = await Location.getForegroundPermissionsAsync();
       return status === 'granted';
-    } catch (error) {
-      console.error('[LocationService] Failed to check permissions:', error);
+    } catch {
       return false;
     }
   }
@@ -114,10 +103,8 @@ class LocationService {
     try {
       const hasPermission = await this.checkPermissions();
       if (!hasPermission) {
-        console.warn('[LocationService] Permission not granted, requesting...');
         const granted = await this.requestPermissions();
         if (!granted) {
-          console.warn('[LocationService] Permission request denied');
           return null;
         }
       }
@@ -125,7 +112,6 @@ class LocationService {
       // 檢查位置服務是否啟用
       const isLocationEnabled = await Location.hasServicesEnabledAsync();
       if (!isLocationEnabled) {
-        console.warn('[LocationService] Location services are disabled. Please enable location services in Settings.');
         return null;
       }
 
@@ -142,23 +128,7 @@ class LocationService {
         accuracy: location.coords.accuracy || undefined,
         speed: location.coords.speed || undefined,
       };
-    } catch (error: any) {
-      // 詳細的錯誤處理（使用 warn 而非 error，因為這不是致命錯誤）
-      // getCurrentLocation 失敗不會阻止應用運行，watchPositionAsync 會繼續嘗試獲取位置
-      if (error.code === 'ERR_LOCATION_PERMISSION_DENIED') {
-        console.warn('[LocationService] Location permission denied. Please grant location permission in Settings.');
-      } else if (error.code === 'ERR_LOCATION_UNAVAILABLE') {
-        console.warn('[LocationService] Location unavailable. Please check your location settings and ensure GPS is enabled.');
-        console.warn('[LocationService] App will continue to try getting location via watchPositionAsync.');
-      } else if (error.message?.includes('kCLErrorDomain error 0')) {
-        console.warn('[LocationService] iOS Location Error: Location service may be disabled or unavailable.');
-        console.warn('[LocationService] Please check Settings > Privacy > Location Services.');
-        console.warn('[LocationService] App will continue to try getting location via watchPositionAsync.');
-      } else {
-        // 其他未知錯誤，記錄詳細信息但使用 warn 級別
-        console.warn('[LocationService] Failed to get current location (non-fatal):', error.message || error);
-      }
-      // 返回 null，讓調用者知道獲取位置失敗，但不阻止應用繼續運行
+    } catch {
       return null;
     }
   }
@@ -172,7 +142,6 @@ class LocationService {
     try {
       // ⭐ 防崩潰修復 1：先停止任何可能殘留的監聽（防呆機制）
       if (this.watchSubscription) {
-        console.log('[LocationService] 🧹 清理舊的 GPS 監聽器（防止重複訂閱）');
         this.watchSubscription.remove();
         this.watchSubscription = null;
       }
@@ -181,7 +150,6 @@ class LocationService {
       if (!hasPermission) {
         const granted = await this.requestPermissions();
         if (!granted) {
-          console.warn('[LocationService] Cannot start tracking: permission denied');
           return false;
         }
       }
@@ -209,7 +177,6 @@ class LocationService {
           // ⭐ Android 修復 1：驗證座標有效性
           if (!isFinite(locationData.latitude) || !isFinite(locationData.longitude) ||
               Math.abs(locationData.latitude) > 90 || Math.abs(locationData.longitude) > 180) {
-            console.warn(`[LocationService] Invalid coordinates: ${locationData.latitude}, ${locationData.longitude}`);
             return;
           }
 
@@ -232,8 +199,7 @@ class LocationService {
 
           const validation = isValidGPSPoint(gpsPoint, lastGPSPoint);
           if (!validation.valid) {
-            console.log(`[LocationService] ⚠️ GPS point filtered: ${validation.reason}`);
-            return; // 直接丟棄，不記錄也不畫線
+            return;
           }
 
           // 計算距離（如果存在上一個位置）
@@ -253,17 +219,9 @@ class LocationService {
             distance = distanceKm * 1000; // 轉換為米
           }
 
-          // 判斷是否在背景模式並記錄詳細日誌
           const isBackground = this.appState.match(/inactive|background/);
-          const timeStr = new Date(location.timestamp).toLocaleTimeString();
-          
           if (isBackground) {
             this.backgroundLogCounter++;
-            // 每 10 個點記錄一次（避免日誌過多），但第一個點總是記錄
-            if (this.backgroundLogCounter % 10 === 0 || this.backgroundLogCounter === 1) {
-              console.log(`📱 [BG-GPS] ${timeStr} | Lat: ${locationData.latitude.toFixed(6)}, Lng: ${locationData.longitude.toFixed(6)} | Speed: ${locationData.speed ? (locationData.speed * 3.6).toFixed(1) : 'N/A'} km/h | Accuracy: ${locationData.accuracy?.toFixed(1) || 'N/A'}m | Count: ${this.backgroundLogCounter}`);
-            }
-            
             // ⭐ 關鍵修復：在背景模式下，如果會話活躍，就記錄點（不依賴 React 組件狀態）
             try {
               // 動態導入避免循環依賴
@@ -278,14 +236,8 @@ class LocationService {
               if (gpsHistoryService && gpsHistoryService.isSessionActive()) {
                 bgTrackingNotification.recordBackgroundPoint();
               }
-            } catch (error) {
-              // 忽略導入錯誤，避免阻塞位置更新
-              // console.warn('[LocationService] Failed to record background point:', error);
-            }
-          } else {
-            // 前景模式：每 5 個點記錄一次（減少日誌量）
-            if (this.backgroundLogCounter === 0 || this.backgroundLogCounter % 5 === 0) {
-              console.log(`🟢 [FG-GPS] ${timeStr} | Lat: ${locationData.latitude.toFixed(6)}, Lng: ${locationData.longitude.toFixed(6)} | Speed: ${locationData.speed ? (locationData.speed * 3.6).toFixed(1) : 'N/A'} km/h`);
+            } catch {
+              // 忽略導入錯誤
             }
           }
 
@@ -301,17 +253,15 @@ class LocationService {
           this.locationCallbacks.forEach(cb => {
             try {
               cb(locationData, distance);
-            } catch (error) {
-              console.error('[LocationService] Error in location callback:', error);
+            } catch {
+              // 靜默忽略
             }
           });
         }
       );
 
-      console.log('[LocationService] Location tracking started');
       return true;
-    } catch (error) {
-      console.error('[LocationService] Failed to start tracking:', error);
+    } catch {
       return false;
     }
   }
@@ -327,7 +277,6 @@ class LocationService {
       this.onLocationUpdate = undefined;
       this.locationCallbacks.clear(); // 清除所有訂閱
       this.backgroundLogCounter = 0;
-      console.log('[LocationService] Location tracking stopped');
     }
   }
 
@@ -354,8 +303,6 @@ class LocationService {
    * 3. 重新啟動追蹤，保留所有現有的訂閱回調
    */
   async restartTracking(): Promise<boolean> {
-    console.log('🔄 [LocationService] Manually restarting GPS listener...');
-    
     try {
       // 保存現有的回調（避免丟失訂閱）
       const savedCallbacks = new Set(this.locationCallbacks);
@@ -363,7 +310,6 @@ class LocationService {
       
       // 1. 強制停止當前監聽
       if (this.watchSubscription) {
-        console.log('[LocationService] 🧹 Stopping current GPS listener...');
         this.watchSubscription.remove();
         this.watchSubscription = null;
       }
@@ -382,8 +328,8 @@ class LocationService {
         savedCallbacks.forEach(cb => {
           try {
             cb(location, distance);
-          } catch (error) {
-            console.error('[LocationService] Error in location callback:', error);
+          } catch {
+            // 靜默忽略
           }
         });
       });
@@ -392,17 +338,8 @@ class LocationService {
       this.locationCallbacks = savedCallbacks;
       
       // 重新啟動追蹤
-      const success = await this.startTracking(onUpdate);
-      
-      if (success) {
-        console.log('✅ [LocationService] GPS Listener restarted successfully.');
-      } else {
-        console.error('❌ [LocationService] Failed to restart GPS listener.');
-      }
-      
-      return success;
-    } catch (error) {
-      console.error('[LocationService] ❌ Error restarting GPS:', error);
+      return await this.startTracking(onUpdate);
+    } catch {
       return false;
     }
   }
@@ -448,12 +385,12 @@ class LocationService {
       this.locationCallbacks.forEach(cb => {
         try {
           cb(location, distance);
-        } catch (error) {
-          console.error('[LocationService] Error in location callback:', error);
+        } catch {
+          // 靜默忽略
         }
       });
-    }).catch((error) => {
-      console.error('[LocationService] Failed to start tracking for subscription:', error);
+    }).catch(() => {
+      // 靜默忽略
     });
 
     // 返回取消訂閱函數
@@ -482,7 +419,6 @@ class LocationService {
     const maxSpeed = 50; // 最大速度 50 km/h
     
     if (speedKmh > maxSpeed) {
-      console.warn(`[LocationService] Suspicious speed detected: ${speedKmh.toFixed(2)} km/h`);
       return false;
     }
     

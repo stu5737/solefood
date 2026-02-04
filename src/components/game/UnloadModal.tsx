@@ -110,8 +110,7 @@ export function UnloadModal({
       setSelectedMode(null);
       onClose();
       onSuccess?.(result.revenue);
-    } catch (e) {
-      console.error('[UnloadModal]', e);
+    } catch {
       setIsProcessing(false);
       setSelectedMode(null);
     }

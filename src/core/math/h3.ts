@@ -43,7 +43,6 @@ const fallbackH3Module = {
   cellToBoundary: (h3Index: string) => {
     // ⭐ 添加空值檢查
     if (!h3Index || typeof h3Index !== 'string') {
-      console.warn('[H3] Invalid h3Index:', h3Index);
       return [];
     }
     
@@ -69,22 +68,6 @@ const fallbackH3Module = {
       // 正六邊形：外接圓半徑 = 邊長
       const radius = edgeLength;
       
-      // ⭐ 調試：記錄計算結果（修復後）
-      if (Math.abs(latGrid) < 2 && Math.abs(lngGrid) < 2) {
-        const cellSize = 1 / gridSize;
-        console.log('[H3] 🔍 Hexagon calculation (FIXED):', {
-          res,
-          gridSize,
-          cellSize: cellSize.toFixed(12),
-          edgeLength: edgeLength.toFixed(8),
-          radius: radius.toFixed(8),
-          lat: lat.toFixed(6),
-          lng: lng.toFixed(6),
-          latGrid,
-          lngGrid,
-        });
-      }
-      
       // ⭐ 改進：使用正確的起始角度（確保六邊形方向一致）
       // H3 六邊形通常從 30 度開始，讓六邊形有一個頂點向上
       const startAngle = Math.PI / 6; // 30 度
@@ -103,44 +86,7 @@ const fallbackH3Module = {
         const finalLat = lat + latOffset;
         const finalLng = lng + lngOffset;
         
-        // ⭐ 調試：驗證邊界點
-        if (!isFinite(finalLat) || !isFinite(finalLng)) {
-          console.warn('[H3] ⚠️  Invalid boundary point:', {
-            i,
-            angle,
-            latOffset,
-            lngOffset,
-            finalLat,
-            finalLng,
-            lat,
-            lng,
-          });
-        }
-        
         boundary.push([finalLat, finalLng]);
-      }
-      
-      // ⭐ 調試：記錄前幾個六邊形的完整邊界（修復後）
-      if (Math.abs(latGrid) < 2 && Math.abs(lngGrid) < 2) {
-        const minLat = Math.min(...boundary.map(([lat]) => lat));
-        const maxLat = Math.max(...boundary.map(([lat]) => lat));
-        const minLng = Math.min(...boundary.map(([, lng]) => lng));
-        const maxLng = Math.max(...boundary.map(([, lng]) => lng));
-        
-        console.log('[H3] 🔍 Hexagon boundary (FIXED):', {
-          h3Index,
-          center: { lat: lat.toFixed(6), lng: lng.toFixed(6) },
-          radius: radius.toFixed(8),
-          edgeLength: edgeLength.toFixed(8),
-          bounds: {
-            latRange: `${minLat.toFixed(6)} to ${maxLat.toFixed(6)} (${(maxLat - minLat).toFixed(8)} deg)`,
-            lngRange: `${minLng.toFixed(6)} to ${maxLng.toFixed(6)} (${(maxLng - minLng).toFixed(8)} deg)`,
-          },
-          boundary: boundary.map(([lat, lng]) => ({
-            lat: lat.toFixed(6),
-            lng: lng.toFixed(6),
-          })),
-        });
       }
       
       return boundary;
@@ -246,8 +192,7 @@ const fallbackH3Module = {
       
       // 返回唯一的 H3 格子陣列
       return Array.from(hexSet);
-    } catch (error) {
-      console.error('[H3] gridPathCells fallback failed:', error);
+    } catch {
       return [startHex, endHex];
     }
   },
@@ -259,9 +204,7 @@ async function getH3Module() {
     try {
       // 嘗試異步導入
       h3Module = await import('h3-js');
-      console.log('[H3] Successfully loaded h3-js module');
-    } catch (error) {
-      console.warn('[H3] Failed to load h3-js module asynchronously, using fallback:', error);
+    } catch {
       h3Module = fallbackH3Module;
     }
   }
@@ -318,19 +261,14 @@ export function latLngToH3(
     // 降級實現總是提供 latLngToCell，所以這個檢查應該不會觸發
     // 但為了安全起見，我們仍然檢查
     if (!h3 || typeof h3.latLngToCell !== 'function') {
-      console.warn('[H3] h3-js module not available, using fallback');
-      // 直接使用降級實現
       return fallbackH3Module.latLngToCell(latitude, longitude, resolution);
     }
     const h3Index = h3.latLngToCell(latitude, longitude, resolution);
     return h3Index || '';
-  } catch (error) {
-    console.error('[H3] Failed to convert lat/lng to H3:', error);
-    // 發生錯誤時使用降級實現
+  } catch {
     try {
       return fallbackH3Module.latLngToCell(latitude, longitude, resolution);
-    } catch (fallbackError) {
-      console.error('[H3] Fallback also failed:', fallbackError);
+    } catch {
       return '';
     }
   }
@@ -351,7 +289,6 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
         const [lat, lng] = fallbackH3Module.cellToLatLng(h3Index);
         return { latitude: lat, longitude: lng };
       }
-      console.warn('[H3] h3-js module not available');
       return null;
     }
     const [lat, lng] = h3.cellToLatLng(h3Index);
@@ -362,12 +299,10 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
       try {
         const [lat, lng] = fallbackH3Module.cellToLatLng(h3Index);
         return { latitude: lat, longitude: lng };
-      } catch (fallbackError) {
-        console.error('[H3] Fallback also failed:', fallbackError);
+      } catch {
         return null;
       }
     }
-    console.error('[H3] Failed to convert H3 to lat/lng:', error);
     return null;
   }
 }
@@ -381,25 +316,20 @@ export function h3ToLatLng(h3Index: string): { latitude: number; longitude: numb
 export function getH3CellBoundary(h3Index: string): Array<[number, number]> {
   // ⭐ 添加空值檢查
   if (!h3Index || typeof h3Index !== 'string') {
-    console.warn('[H3] Invalid h3Index provided to getH3CellBoundary:', h3Index);
     return [];
   }
   
   try {
     const h3 = getH3ModuleSync();
     if (!h3 || !h3.cellToBoundary) {
-      console.warn('[H3] cellToBoundary not available, using fallback');
       return fallbackH3Module.cellToBoundary(h3Index);
     }
     const boundary = h3.cellToBoundary(h3Index);
     return boundary || [];
-  } catch (error) {
-    console.error('[H3] Failed to get cell boundary:', error);
-    // 發生錯誤時使用降級實現
+  } catch {
     try {
       return fallbackH3Module.cellToBoundary(h3Index);
-    } catch (fallbackError) {
-      console.error('[H3] Fallback also failed:', fallbackError);
+    } catch {
       return [];
     }
   }
@@ -415,12 +345,10 @@ export function getH3Resolution(h3Index: string): number {
   try {
     const h3 = getH3ModuleSync();
     if (!h3 || !h3.getResolution) {
-      console.warn('[H3] h3-js module not available');
       return H3_RESOLUTION;
     }
     return h3.getResolution(h3Index);
-  } catch (error) {
-    console.error('[H3] Failed to get resolution:', error);
+  } catch {
     return H3_RESOLUTION;
   }
 }
@@ -466,13 +394,10 @@ export function getH3GridPath(
     
     // 降級方案：使用 fallback 模組的線性插值實現
     return fallbackH3Module.gridPathCells(startHex, endHex);
-  } catch (error) {
-    // 距離太遠或計算失敗，使用 fallback
-    console.error('[H3] Grid path calculation failed:', error);
+  } catch {
     try {
       return fallbackH3Module.gridPathCells(startHex, endHex);
-    } catch (fallbackError) {
-      console.error('[H3] Fallback gridPathCells also failed:', fallbackError);
+    } catch {
       return [startHex, endHex];
     }
   }
@@ -490,11 +415,8 @@ export function getH3CellChildren(h3Index: string, childResolution: number): str
       return h3.cellToChildren(h3Index, childResolution);
     }
     
-    // 降級方案：返回原格子
-    console.warn('[H3] cellToChildren not available, using fallback');
     return [h3Index];
-  } catch (error) {
-    console.error('[H3] Cell children calculation failed:', error);
+  } catch {
     return [h3Index];
   }
 }

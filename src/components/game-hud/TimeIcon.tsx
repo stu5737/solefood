@@ -18,9 +18,7 @@ export const TimeIcon: React.FC<TimeIconProps> = React.memo(({ size = 36 }) => {
       source={imageSource}
       style={[styles.icon, { width: size, height: size }]}
       resizeMode="contain"
-      onError={(error) => {
-        console.warn('[TimeIcon] 圖片加載失敗:', error);
-      }}
+      onError={() => {}}
     />
   );
 });

@@ -56,7 +56,6 @@ export const GhostOverlay: React.FC = () => {
       // 5. 顯示成功消息
       Alert.alert('Revived!', '+30 Stamina');
     } catch (error) {
-      console.error('[GhostOverlay] Error during ad watch:', error);
       Alert.alert('Error', 'Failed to watch ad. Please try again.');
     } finally {
       setIsWatchingAd(false);

@@ -210,7 +210,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // ⭐⭐⭐ 徹底修復：從 GPS points 計算會話的 H3 GeoJSON（就像 GPS 軌跡一樣）
   const calculateSessionH3GeoJson = useCallback((points: GPSHistoryPoint[]) => {
     if (!points || points.length === 0) {
-      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No points');
       return null;
     }
 
@@ -223,7 +222,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         const h3Index = latLngToH3(point.latitude, point.longitude, H3_RESOLUTION);
         hexes.add(h3Index);
       } catch (error) {
-        console.warn('[RealTimeMap] Failed to convert point to H3:', error);
       }
     });
     
@@ -235,16 +233,13 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         const gridPath = getH3GridPath(h3Start, h3End);
         gridPath.forEach(hex => hexes.add(hex));
       } catch (error) {
-        console.warn('[RealTimeMap] Failed to interpolate H3 path:', error);
       }
     }
     
     if (hexes.size === 0) {
-      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No hexes generated');
       return null;
     }
     
-    console.log('[RealTimeMap] 🎨 Calculating GeoJSON for', hexes.size, 'H3 hexes');
     
     // 轉換為 GeoJSON（複用現有的 getLowPolyCircle 邏輯）
     const multiPolygonCoordinates: number[][][][] = [];
@@ -253,7 +248,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         // ⭐⭐ 關鍵修復：h3ToLatLng 返回對象 { latitude, longitude }，不是數組 [lat, lng]
         const coord = h3ToLatLng(h3Index);
         if (!coord) {
-          console.warn('[RealTimeMap] h3ToLatLng returned null for:', h3Index);
           return;
         }
         
@@ -261,16 +255,13 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         const circleCoords = getLowPolyCircle(lat, lng, CIRCLE_RADIUS_METERS, 8);
         multiPolygonCoordinates.push([circleCoords]);
       } catch (error) {
-        console.warn('[RealTimeMap] Failed to convert H3 to circle:', h3Index, error);
       }
     });
     
     if (multiPolygonCoordinates.length === 0) {
-      console.log('[RealTimeMap] ⚠️ calculateSessionH3GeoJson: No polygons generated');
       return null;
     }
     
-    console.log('[RealTimeMap] ✅ Generated', multiPolygonCoordinates.length, 'H3 circles for session');
     
     return {
       type: 'FeatureCollection' as const,
@@ -365,14 +356,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
     const renderedHexes = multiPolygonCoordinates.length;
     const samplingRate = totalHexes > 0 ? ((renderedHexes / totalHexes) * 100).toFixed(1) : '0';
 
-    console.log(`[RealTimeMap] 🎨 GeoJSON 圓形氣泡轉換完成: ${renderedHexes} 個圓形 (採樣率: ${samplingRate}%)`, {
-      totalHexes,
-      renderedHexes,
-      circleCount: multiPolygonCoordinates.length,
-      stepsPerCircle: CIRCLE_STEPS,
-      radiusMeters: CIRCLE_RADIUS_METERS,
-      samplingRate: `${samplingRate}%`,
-    });
 
     return geoJson;
   }, [hexesRenderKey, isHydrated, getLowPolyCircle]); // ⭐ 使用 hexesRenderKey 確保內容變化時正確更新
@@ -382,7 +365,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
     // ⚡️ 關鍵修復：使用 .size 作為依賴，確保清空時正確響應
     // 只在遊戲模式且有新格子時渲染
     if (!isHydrated || currentSessionNewHexes.size === 0) {
-      console.log('[RealTimeMap] 🎨 當前會話 GeoJSON: 無新格子或未 hydrated');
       return null;
     }
 
@@ -435,11 +417,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       ],
     };
 
-    console.log(`[RealTimeMap] 🎨 當前會話 GeoJSON 轉換完成: ${multiPolygonCoordinates.length} 個圓形`, {
-      totalNewHexes: currentSessionNewHexes.size,
-      renderedCircles: multiPolygonCoordinates.length,
-      radiusMeters: CIRCLE_RADIUS_METERS,
-    });
 
     return geoJson;
   }, [currentSessionNewHexes.size, isHydrated, getLowPolyCircle]); // ⚡️ 使用 .size 作為依賴
@@ -448,29 +425,23 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   useEffect(() => {
     if (exploredHexes.size > 0) {
       setHexesRenderKey(prev => prev + 1);
-      console.log('[RealTimeMap] 🔄 exploredHexes changed, forcing re-render:', exploredHexes.size);
     }
   }, [exploredHexes.size]);
 
   // ⭐ 新增：監聽採集狀態變化，確保停止時清除當前會話的視覺元素
   useEffect(() => {
     if (!isCollecting) {
-      console.log('[RealTimeMap] 🛑 採集已停止，當前會話新 H3 數量:', currentSessionNewHexes.size);
-      console.log('[RealTimeMap] 🎨 綠色層已隱藏（通過 isCollecting 條件），青色層應包含:', exploredHexes.size, '個 H3');
       
       // ⚡️⚡️ 修復 4 (步驟 1): 立即強制卸載 LivePath
       setForceUnmountLivePath(true);
-      console.log('[RealTimeMap] 🗑️ 強制卸載 LivePath（防止多次採集後的殘留）');
       
       // ⚡️ 修復 1: 強制重新渲染 UserMarker（防止消失）
       setMarkerKey(prev => prev + 1);
-      console.log('[RealTimeMap] 🔄 UserMarker key 已更新，強制重新渲染');
       
       // ⚡️ 修復 2: 短暫延遲後更新 H3 圖層，等待 mergeCurrentSessionHexes 完成
       // 因為現在不會提前清空 currentSessionNewHexes，數據會正確合併，只需一次更新
       setTimeout(() => {
         setHexesRenderKey(prev => prev + 1);
-        console.log('[RealTimeMap] 🔄 H3 render key 已更新，顯示合併後的完整數據');
       }, 300);
       
       // ⚡️ 修復 3: 強化 GPS 軌跡清理（多次強制重新渲染，確保完全清除）
@@ -480,7 +451,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       lastTrailLastPointRef.current = null;
       lastUpdateTimeRef.current = 0;
       setTrailUpdateTrigger(prev => prev + 1);
-      console.log('[RealTimeMap] 🗑️ GPS 軌跡已立即清除（第 1 次）');
       
       // 第二次：0ms 延遲（確保 React 更新循環完成）
       setTimeout(() => {
@@ -489,7 +459,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         lastTrailLastPointRef.current = null;
         lastUpdateTimeRef.current = 0;
         setTrailUpdateTrigger(prev => prev + 1);
-        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 2 次，0ms 後）');
       }, 0);
       
       // 第三次：50ms 延遲（確保視圖更新）
@@ -499,7 +468,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         lastTrailLastPointRef.current = null;
         lastUpdateTimeRef.current = 0;
         setTrailUpdateTrigger(prev => prev + 1);
-        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 3 次，50ms 後）');
       }, 50);
       
       // 第四次：100ms 延遲（最終確認，確保無殘留）
@@ -509,33 +477,27 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         lastTrailLastPointRef.current = null;
         lastUpdateTimeRef.current = 0;
         setTrailUpdateTrigger(prev => prev + 1);
-        console.log('[RealTimeMap] 🗑️ GPS 軌跡清除（第 4 次，100ms 後）- 確認長度:', trailCoordinatesRef.current.length, '應為 0');
       }, 100);
       
       // ⚡️⚡️ 修復 4 (步驟 2): 200ms 後重新啟用 LivePath（確保下次採集時正常渲染）
       setTimeout(() => {
         setForceUnmountLivePath(false);
-        console.log('[RealTimeMap] ✅ LivePath 已重新啟用（準備下次採集）');
       }, 200);
       
       // ⭐⭐ 智能週期性清理：每 5 次採集執行一次深度清理（降低閃爍頻率 + 延遲執行）
       collectionCountRef.current += 1;
       const currentCount = collectionCountRef.current;
-      console.log('[RealTimeMap] 📊 採集計數器:', currentCount);
       
       if (currentCount % 5 === 0) {
-        console.log('[RealTimeMap] 🔄 準備執行第', currentCount, '次採集後的深度清理（防止累積問題）');
         
         // ⚡️ 關鍵：延遲 1.5 秒執行，用戶注意力已轉移，減少閃爍感知
         setTimeout(() => {
           // 步驟 1: 深度清理 H3 圖層
           setH3DeepCleanTrigger(prev => prev + 1);
-          console.log('[RealTimeMap] 🧹 深度清理 H3 圖層（步驟 1/2）');
           
           // 步驟 2: 延遲 500ms 後完成清理
           setTimeout(() => {
             setHexesRenderKey(prev => prev + 1);
-            console.log('[RealTimeMap] ✅ 深度清理完成（步驟 2/2）');
           }, 500);
         }, 1500); // 1.5 秒延遲，降低閃爍感知
       }
@@ -543,11 +505,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       // ⭐ 修復：不再提前清除 currentSessionNewHexes
       // 讓 endSession → mergeCurrentSessionHexes 自然處理合併和清除
       // 避免在合併之前就清空數據導致漏圖
-      console.log('[RealTimeMap] 🛑 採集已停止，等待 endSession 自動合併 H3 數據');
     } else {
       // ⚡️⚡️ 修復 4 (步驟 3): 採集開始時，確保 LivePath 可以渲染
       setForceUnmountLivePath(false);
-      console.log('[RealTimeMap] ▶️ 採集進行中，當前會話新 H3 數量:', currentSessionNewHexes.size);
     }
   }, [isCollecting, currentSessionNewHexes.size, exploredHexes.size]);
   
@@ -558,7 +518,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         .filter(s => s.endTime) // 只要已結束的會話
         .slice(0, 20); // 最近 20 次會話（避免渲染過多組件）
       setHistorySessions(sessions);
-      console.log('[RealTimeMap] 📊 Loaded', sessions.length, 'historical sessions for H3 rendering');
     };
     
     // 初始化時載入
@@ -585,18 +544,14 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       // 如果 exploredHexes 有數據，說明已經 hydrated
       if (exploredHexes.size > 0) {
         setIsHydrated(true);
-        console.log('[RealTimeMap] ✅ Store hydrated, exploredHexes:', exploredHexes.size);
       } else {
         // 如果沒有數據，嘗試手動觸發 updateExploredHexesFromHistory
-        console.log('[RealTimeMap] ⚠️  No exploredHexes, triggering updateExploredHexesFromHistory...');
         try {
           await updateExploredHexesFromHistory();
           const { useSessionStore } = require('../../stores/sessionStore');
           const store = useSessionStore.getState();
-          console.log('[RealTimeMap] ✅ After updateExploredHexesFromHistory, exploredHexes:', store.exploredHexes.size);
           setIsHydrated(true);
         } catch (error) {
-          console.error('[RealTimeMap] ❌ Failed to update exploredHexes:', error);
           setIsHydrated(true); // 即使失敗也標記為 hydrated，避免無限等待
         }
       }
@@ -608,7 +563,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // ⭐ 新增：當 mapMode 改變時，重新更新 exploredHexes
   useEffect(() => {
     if (actualMapMode === 'GAME' && isHydrated) {
-      console.log('[RealTimeMap] 🔄 Map mode changed to GAME, updating exploredHexes...');
       updateExploredHexesFromHistory().catch(console.error);
     }
   }, [actualMapMode, isHydrated]);
@@ -642,7 +596,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         });
         
         setFollowMode('USER');
-        console.log('[RealTimeMap] Initial focus executed: map ready + location available, USER mode enabled');
       }
     }, focusDelay);
   }, [isMapReady, currentLocation, showHistoryTrail]);
@@ -650,7 +603,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
   // ⭐ Android 修復：地圖準備完成的 callback
   const handleMapReady = () => {
     setIsMapReady(true);
-    console.log('[RealTimeMap] Map ready callback triggered');
   };
 
   // 獲取 H3 網格邊界（用於顯示已探索區域）
@@ -686,7 +638,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
     // 如果不是 fallback ID，嘗試使用 h3-js（但通常會失敗）
     // 為了避免編碼錯誤，我們直接返回空數組
     // 在 React Native 環境中，所有 H3 ID 都應該是 fallback 格式
-    console.warn('[RealTimeMap] Unknown H3 index format:', h3Index);
     return [];
   };
 
@@ -728,7 +679,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
                 },
                 animated: true,
               });
-              console.log('[RealTimeMap] Historical trail: Map fitted to coordinates');
             }
           });
         }
@@ -805,7 +755,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       if (!hasPermission) {
         const granted = await locationService.requestPermissions();
         if (!granted) {
-          console.warn('[RealTimeMap] Location permission denied. Map will not show user location.');
           // 即使權限被拒絕，也繼續執行（用戶可以稍後在設置中授予權限）
         }
       }
@@ -813,7 +762,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
       // 獲取初始位置
       const location = await locationService.getCurrentLocation();
       if (location && isFinite(location.latitude) && isFinite(location.longitude)) {
-        console.log('[RealTimeMap] Initial location obtained:', location);
         // Null Guard：保存有效的 location（防止 Marker 消失）
         const newCoord = {
           latitude: location.latitude,
@@ -868,7 +816,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
                   },
                   animated: true,
                 });
-                console.log('[RealTimeMap] Historical trail: Map fitted to coordinates on initial load');
               }
             });
           }
@@ -895,7 +842,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         }
       } else {
-        console.warn('[RealTimeMap] Failed to get initial location');
       }
     };
 
@@ -906,13 +852,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
 
     // 訂閱位置更新（始終訂閱，以便更新當前位置和顯示軌跡）
     subscriptionRef.current = locationService.subscribeToLocationUpdates((location, distance) => {
-      console.log('[RealTimeMap] Location update received:', {
-        lat: location.latitude,
-        lng: location.longitude,
-        distance: distance,
-        accuracy: location.accuracy,
-        historyCount: gpsHistoryService.getHistoryCount(),
-      });
       
       // ⭐ Android 修復 1：解鎖視圖更新 - setCurrentLocation 永遠執行（不依賴 isCollecting）
       // 這樣可以確保使用者游標始終顯示，無論是否在採集狀態
@@ -930,7 +869,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           // 第一個點，直接設置（即使精度較差也要顯示）
           stableCoordinateRef.current = newCoord;
           setMarkerKey(prev => prev + 1); // ⭐ Android 強力修復：強制觸發 re-render
-          console.log('[RealTimeMap] Initial coordinate set:', newCoord);
         } else {
           // 簡單的距離計算（米）
           const coordDistance = Math.sqrt(
@@ -945,14 +883,12 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           if (coordDistance > threshold) {
             stableCoordinateRef.current = newCoord;
             setMarkerKey(prev => prev + 1); // ⭐ Android 強力修復：強制觸發 re-render
-            console.log(`[RealTimeMap] Coordinate updated (distance: ${coordDistance.toFixed(1)}m, threshold: ${threshold}m, accuracy: ${location.accuracy?.toFixed(1)}m)`);
           }
         }
         
         // ⭐ 關鍵：setCurrentLocation 永遠執行，不依賴 isCollecting
         setCurrentLocation(location);
       } else {
-        console.warn('[RealTimeMap] Invalid location data received:', location);
       }
       
       // ⭐ Android 修復 2：區分視圖更新和數據記錄
@@ -970,7 +906,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             // ✅ Phase 1 修復：使用新的返回值格式
             const explorationStatus = discoverNewHex(h3Index);
             if (explorationStatus.hasNewDiscovery) {
-              console.log('[RealTimeMap] 🎯 New territory discovered:', h3Index);
             }
           }
         }
@@ -1009,11 +944,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             };
             
             const result = entropyEngine.processMovement(input);
-            console.log('[RealTimeMap] Processed movement via entropy engine:', {
-              distance: input.distance.toFixed(3),
-              speed: speed?.toFixed(1),
-              events: result.events?.length || 0,
-            });
             
             // 如果有拾取事件，記錄日誌（可選：未來可以顯示 Toast 提示）
             if (result.events && result.events.length > 0) {
@@ -1021,11 +951,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
                 e.type === 'loot_success' || e.type === 'loot_converted' || e.type === 'loot_failed' || e.type === 'loot_rescue_available'
               );
               if (lootEvent) {
-                console.log('[RealTimeMap] 🎉 Loot event triggered:', lootEvent.type, lootEvent.data);
               }
             }
           } catch (error) {
-            console.error('[RealTimeMap] Error processing movement via entropy engine:', error);
           }
         }
         
@@ -1047,7 +975,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           (newTrail.length === 0 && lastTrailLengthRef.current > 0); // 軌跡被清空時也要更新
         
         if (shouldUpdate) {
-          console.log('[RealTimeMap] Updating current session trail with', newTrail.length, 'points');
           updateTrailCoordinates(newTrail);
         }
       }
@@ -1058,15 +985,12 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
 
     // ⭐ 防崩潰修復：嚴格的生命週期清理
     return () => {
-      console.log('[RealTimeMap] 🧹 清理位置訂閱（防止記憶體洩漏）');
       // 清理訂閱
       if (subscriptionRef.current) {
         try {
           subscriptionRef.current.remove();
           subscriptionRef.current = null;
-          console.log('[RealTimeMap] ✅ 位置訂閱已清理');
         } catch (error) {
-          console.warn('[RealTimeMap] ⚠️  清理訂閱時出錯:', error);
         }
       }
     };
@@ -1095,7 +1019,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         if (!hasPermission) {
           const granted = await locationService.requestPermissions();
           if (!granted) {
-            console.warn('[RealTimeMap] Cannot watch heading: permission denied');
             return;
           }
         }
@@ -1131,7 +1054,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           }
         });
       } catch (error) {
-        console.error('[RealTimeMap] Failed to watch heading:', error);
       }
     };
 
@@ -1361,7 +1283,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
           // 關鍵：一旦用戶開始拖動地圖，立即切換到 NONE 模式（手動模式）
           if (followMode !== 'NONE') {
             setFollowMode('NONE');
-            console.log('[RealTimeMap] User dragged map, switched to NONE mode');
           }
         }}
       >
@@ -1369,18 +1290,12 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
         {/* 數據來源：直接從 gpsHistoryService 的持久化 GPS points 計算，不依賴動態的 exploredHexes Set */}
         {/* 優點：無漏圖（每個會話數據獨立）、無閃爍（key 固定）、易於調試（清楚每個會話狀態） */}
         {actualMapMode === 'GAME' && isHydrated && historySessions.map((session, index) => {
-          console.log(`[RealTimeMap] 🎨 Rendering H3 for session ${index + 1}/${historySessions.length}:`, {
-            sessionId: session.sessionId,
-            pointsCount: session.points.length,
-          });
           
           const geoJson = calculateSessionH3GeoJson(session.points);
           if (!geoJson) {
-            console.warn(`[RealTimeMap] ⚠️ No GeoJSON generated for session ${session.sessionId}`);
             return null;
           }
           
-          console.log(`[RealTimeMap] ✅ Rendering H3 Geojson for session ${session.sessionId}`);
           
           return (
             <Geojson
@@ -1466,14 +1381,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
             longitude: currentLocation.longitude,
           } : (stableCoordinateRef.current || lastValidLocationRef.current);
           
-          console.log('[RealTimeMap] Rendering UserMarker check:', {
-            actualMapMode,
-            hasCurrentLocation: !!currentLocation,
-            hasStableCoord: !!stableCoordinateRef.current,
-            hasLastValidCoord: !!lastValidLocationRef.current,
-            markerCoord,
-            markerKey,
-          });
           
           // 僅 IDLE 顯示白色箭頭；按下採集後隱藏（Mapbox 版會改顯示 3D 推車）
           if (actualMapMode === 'GAME' && markerCoord && !isCollecting) {
@@ -1558,11 +1465,9 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
                     pitch: 0,
                   }, { duration: 500 });
                 }
-                console.log('[RealTimeMap] Switched to USER mode (North Up)');
               } else if (followMode === 'USER') {
                 // 切換到 COMPASS 模式（跟隨用戶，地圖隨手機旋轉）
                 setFollowMode('COMPASS');
-                console.log('[RealTimeMap] Switched to COMPASS mode');
               } else {
                 // 從 COMPASS 切換回 USER 模式（關閉旋轉，回到北方朝上）
                 setFollowMode('USER');
@@ -1576,7 +1481,6 @@ export const RealTimeMap: React.FC<RealTimeMapProps> = ({
                     pitch: 0,
                   }, { duration: 500 });
                 }
-                console.log('[RealTimeMap] Switched to USER mode (from COMPASS)');
               }
             }}
           >

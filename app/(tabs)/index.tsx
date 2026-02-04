@@ -132,9 +132,8 @@ export default function GameScreenV9Plus() {
         // 強制保存
         try {
           await gpsHistoryService.forceSave();
-          console.log('[GameScreen] ✅ 初始化完成');
-        } catch (error) {
-          console.error('[GameScreen] ❌ 強制保存失敗:', error);
+        } catch {
+          // 靜默忽略
         }
 
         // 請求位置權限
@@ -148,10 +147,9 @@ export default function GameScreenV9Plus() {
           const location = await locationService.getCurrentLocation();
           if (location) {
             setUserLocation({ latitude: location.latitude, longitude: location.longitude });
-            console.log('[GameScreen] 初始位置:', location);
           }
-        } catch (error) {
-          console.warn('[GameScreen] 獲取初始位置失敗:', error);
+        } catch {
+          // 靜默忽略
         }
 
         // 載入歷史會話
@@ -200,10 +198,9 @@ export default function GameScreenV9Plus() {
 
           if (data.length > 0) {
             useRestaurantStore.getState().setRestaurantPoints(data);
-            console.log('[GameScreen] 已載入便利商店（' + source + '）:', data.length, '筆');
           }
-        } catch (e) {
-          console.warn('[GameScreen] 便利商店資料未載入（merged 請先執行 scripts/merge_store_sources.py）:', e);
+        } catch {
+          // 靜默忽略
         }
 
         // 初始化磁吸系統
@@ -218,8 +215,7 @@ export default function GameScreenV9Plus() {
         magnetSystem.initialize(magnetCallbacks);
 
         setIsReady(true);
-      } catch (error) {
-        console.error('[GameScreen] 初始化錯誤:', error);
+      } catch {
         setIsReady(true);
       }
     };
@@ -229,7 +225,6 @@ export default function GameScreenV9Plus() {
     // 清理函數
     return () => {
       if (gpsHistoryService.isSessionActive()) {
-        console.warn('[GameScreen] 組件卸載，結束會話...');
         (async () => {
           await gpsHistoryService.endSession('picnic');
           gpsHistoryService.forceSave();
@@ -344,7 +339,6 @@ export default function GameScreenV9Plus() {
     }
 
     const sessionId = await gpsHistoryService.startSession();
-    console.log('[GameScreen] 🚀 開始採集:', sessionId);
 
     setGameState('COLLECTING');
 
@@ -362,7 +356,6 @@ export default function GameScreenV9Plus() {
    * 卸貨（直接結束會話，不開變現彈窗；用於 DevDashboard 等）
    */
   const handleUnload = async () => {
-    console.log('[GameScreen] 🚗 卸貨...');
     setGameState('UNLOADING');
     await finishUnloadSession();
   };
@@ -372,18 +365,24 @@ export default function GameScreenV9Plus() {
    * 用於「靠近餐廳 → UnloadModal 確認後」或 handleUnload
    */
   const finishUnloadSession = async () => {
+    console.log('[🏁 GameScreen] 結束採集會話，開始卸貨');
     try {
       magnetSystem.stop();
       bgTrackingNotification.stopTracking();
       await backgroundLocationService.stopBackgroundTracking();
+      console.log('[⏹️ GameScreen] 背景服務已停止');
+      
       await gpsHistoryService.endSession('unload');
+      console.log('[💾 GameScreen] GPS 會話已結束');
+      
       const sessions = gpsHistoryService.getAllSessions();
       setAllSessions(sessions);
       showFloatingText('💰 卸貨完成！', '#2196F3');
       setSelectedRestaurantForUnload(null);
       setGameState('IDLE');
+      console.log('[✅ GameScreen] 卸貨流程完成');
     } catch (e) {
-      console.warn('[GameScreen] finishUnloadSession 部分失敗（仍切回 IDLE）:', e);
+      console.error('[❌ GameScreen] 卸貨流程出錯', e);
       setSelectedRestaurantForUnload(null);
       setGameState('IDLE');
     }
@@ -393,7 +392,6 @@ export default function GameScreenV9Plus() {
    * 野餐
    */
   const handlePicnic = async () => {
-    console.log('[GameScreen] 🍽️ 野餐...');
 
     setGameState('PICNIC');
 
@@ -410,7 +408,6 @@ export default function GameScreenV9Plus() {
       usePlayerStore.getState().updateStamina(recoveredStamina);
       showFloatingText(`+${recoveredStamina} ⚡`, '#4CAF50');
     } catch (e) {
-      console.warn('[GameScreen] handlePicnic 部分失敗:', e);
     } finally {
       setGameState('IDLE');
     }
@@ -419,7 +416,6 @@ export default function GameScreenV9Plus() {
   // ========== 磁吸系統回調 ==========
 
   const handleT3Encounter = useCallback((item: Item) => {
-    console.log('[GameScreen] 🟣 T3 遭遇:', item);
     setPendingItem(item);
     setRescueType('Adrenaline'); // T3 不需要廣告，但使用相同彈窗
     setRescueTitle('🟣 發現皇室純糖！');
@@ -454,7 +450,6 @@ export default function GameScreenV9Plus() {
   }, [showFloatingText]);
 
   const handleStaminaShortage = useCallback((item: Item) => {
-    console.log('[GameScreen] 💉 體力不足:', item);
     setPendingItem(item);
     setRescueType('Adrenaline');
     setRescueTitle('體力不足');
@@ -464,7 +459,6 @@ export default function GameScreenV9Plus() {
   }, []);
 
   const handleBackpackFullT2 = useCallback((item: Item) => {
-    console.log('[GameScreen] 📦 背包已滿 (T2):', item);
     setPendingItem(item);
     setRescueType('TempExpansion');
     setRescueTitle('背包已滿');
@@ -474,7 +468,6 @@ export default function GameScreenV9Plus() {
   }, []);
 
   const handleNormalPickup = useCallback((item: Item) => {
-    console.log('[GameScreen] ✅ 正常拾取:', item);
     const tierName = item.tier === 1 ? '琥珀糖' : item.tier === 2 ? '翡翠晶糖' : '皇室純糖';
     const tierColor = item.tier === 1 ? '#FFC107' : item.tier === 2 ? '#4CAF50' : '#9C27B0';
     showFloatingText(`+1 ${tierName}`, tierColor);
@@ -482,14 +475,12 @@ export default function GameScreenV9Plus() {
   }, [showFloatingText]);
 
   const handleItemIgnored = useCallback((item: Item, reason: string) => {
-    console.log('[GameScreen] ❌ 物品被忽略:', item, reason);
     showFloatingText('已放棄物品', '#888');
   }, [showFloatingText]);
 
   // ========== 救援廣告處理 ==========
 
   const handleAdSuccess = async () => {
-    console.log('[GameScreen] 📺 廣告成功:', rescueType);
 
     if (rescueType === 'GhostRevival') {
       // 靈魂復活
@@ -510,7 +501,6 @@ export default function GameScreenV9Plus() {
   };
 
   const handleAdCancel = () => {
-    console.log('[GameScreen] ❌ 用戶取消廣告');
 
     if (pendingItem) {
       magnetSystem.handleAdCancel(pendingItem);
@@ -532,7 +522,6 @@ export default function GameScreenV9Plus() {
   };
 
   const handleRecenterMap = () => {
-    console.log('[GameScreen] 📍 重新定位');
     showFloatingText('📍 重新定位', '#2196F3');
   };
 
@@ -566,7 +555,6 @@ export default function GameScreenV9Plus() {
         showFloatingText('📷 已拍攝', '#4CAF50');
       }
     } catch (e) {
-      console.warn('[GameScreen] Camera error:', e);
       showFloatingText('模擬器不支援相機，請在實機上使用', '#FF9800');
     }
   };
@@ -682,7 +670,6 @@ export default function GameScreenV9Plus() {
           actionState={gameState === 'COLLECTING' ? 'active' : 'idle'}
           onActionPress={() => {
             if (gameState === 'COLLECTING') {
-              console.log('[GameScreen] CAPTURE pressed');
             } else {
               // 只要不在採集中（IDLE / PICNIC / UNLOADING 等），就允許開始採集
               // 防止野餐後 gameState 卡在 PICNIC 導致 GO 按鈕無效
@@ -794,7 +781,7 @@ export default function GameScreenV9Plus() {
           onShowHistory={handleShowHistory}
           onRecenterMap={handleRecenterMap}
           onQuickConsume={handleQuickConsume}
-          onBackpackPress={() => console.log('打開背包詳情')}
+          onBackpackPress={() => {}}
           gameState={gameState}
           isBackpackFull={isBackpackFull}
           sessionCount={allSessions.length}
@@ -829,7 +816,6 @@ export default function GameScreenV9Plus() {
           try {
             await finishUnloadSession();
           } catch (e) {
-            console.warn('[GameScreen] 卸貨收尾失敗:', e);
           }
         }}
         onPicnic={() => {

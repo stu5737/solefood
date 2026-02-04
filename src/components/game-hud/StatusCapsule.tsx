@@ -71,8 +71,8 @@ export const StatusCapsule: React.FC<StatusCapsuleProps> = ({
   let glassOverlaySource: any = null;
   try {
     glassOverlaySource = require('../../../assets/images/capsule_glass_overlay.png');
-  } catch (e) {
-    console.warn('[StatusCapsule] ⚠️ Glass overlay image not found. Please add capsule_glass_overlay.png to assets/images/');
+  } catch {
+    // 可選素材不存在時靜默忽略
   }
 
   return (

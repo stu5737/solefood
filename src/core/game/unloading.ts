@@ -164,7 +164,6 @@ export function executeUnloadSettlement(
     itemsDelivered: items.length,
   };
 
-  console.log('[UnloadSettlement] Settlement completed', result);
 
   return result;
 }

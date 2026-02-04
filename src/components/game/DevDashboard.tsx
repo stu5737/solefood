@@ -163,13 +163,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
       const inCurrentSession = sessionState.currentSessionNewHexes.has(currentH3Index);
       
       const currentZoneStatus = getZoneStatus();
-      console.log('🔍 [診斷] 當前 H3 狀態', {
-        h3Index: currentH3Index, // ⭐ 顯示完整 H3 Index
-        在歷史記錄: inExploredHexes ? '✅' : '❌',
-        在本次會話: inCurrentSession ? '✅' : '❌',
-        Zone判定: `${currentZoneStatus.emoji} ${currentZoneStatus.label}`,
-        GPS坐標: gpsData.currentLocation, // ⭐ 診斷用：顯示 GPS 坐標
-      });
     }
   }, [
     currentH3Index, 
@@ -217,12 +210,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
   // ✅ 診斷 Log 2：開拓者紅利判定（實時監控）
   useEffect(() => {
     if (visible && isExpanded) {
-      console.log('🔍 [診斷] 開拓者紅利判定', {
-        isPathfinder: isPathfinder ? '✅ 啟動' : '❌ 未啟動',
-        邏輯: '不在 exploredHexes = 啟動',
-        exploredHexesSize: sessionState.exploredHexes.size,
-        currentSessionSize: sessionState.currentSessionNewHexes.size,
-      });
     }
   }, [
     isPathfinder, 
@@ -277,11 +264,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
   // 🆕 Phase 2：添加隨機物品（開拓者紅利）
   const handleAddItemWithBonus = () => {
     // ✅ 診斷 Log 6：測試按鈕調用
-    console.log('🔍 [診斷] 測試按鈕點擊', {
-      currentH3Index: currentH3Index?.substring(0, 12) + '...',
-      在exploredHexes: currentH3Index ? sessionState.exploredHexes.has(currentH3Index) : false,
-      在currentSession: currentH3Index ? sessionState.currentSessionNewHexes.has(currentH3Index) : false,
-    });
     
     // ✅ 修復：使用當前位置判定開拓者紅利
     // 檢查當前 H3 是否為新領域（不在 7 天歷史記錄中）
@@ -292,11 +274,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
     const pathfinderBonus = isCurrentNewArea ? 10 : 0;
     
     // ✅ 診斷 Log 7：判定結果
-    console.log('🔍 [診斷] 開拓者紅利計算', {
-      isCurrentNewArea,
-      pathfinderBonus,
-      預期T2機率: isCurrentNewArea ? '24.0%' : '14.0%',
-    });
     
     const item = inventoryState.addRandomItem({
       pathfinderBonus,
@@ -708,7 +685,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: '#2196F3', marginTop: 12 }]}
             onPress={async () => {
-              console.log('🔄 [DevDashboard] Restart GPS button pressed');
               try {
                 const success = await locationService.restartTracking();
                 if (success) {
@@ -717,7 +693,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                   Alert.alert('❌ GPS 重啟失敗', '請檢查權限設置或嘗試手動重置模擬器位置服務');
                 }
               } catch (error) {
-                console.error('[DevDashboard] Error restarting GPS:', error);
                 Alert.alert('❌ 錯誤', `重啟 GPS 時發生錯誤: ${error}`);
               }
             }}
@@ -778,7 +753,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                 
                 Alert.alert('✅ 測試數據已載入', `已添加 ${testHexes.size} 個測試 H3 六邊形\n總共 ${mergedHexes.size} 個六邊形`);
               } catch (error) {
-                console.error('[DevDashboard] Error loading fake history:', error);
                 Alert.alert('❌ 錯誤', `載入測試數據失敗: ${error}`);
               }
             }}
@@ -790,7 +764,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: '#F44336', marginTop: 12 }]}
             onPress={() => {
-              console.log('[DevDashboard] 🔴 Clear History button touched!');
               Alert.alert(
                 '⚠️ 確認清除',
                 '即將清除所有歷史數據：\n' +
@@ -809,7 +782,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                     text: '確認清除',
                     style: 'destructive',
                     onPress: async () => {
-                      console.log('[DevDashboard] 🗑️ Step 1: User confirmed clear operation');
                       
                       try {
                         const { useSessionStore } = require('../../stores/sessionStore');
@@ -818,37 +790,25 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                         const { DevSettings } = require('react-native');
                         
                         // Step 1: Clear GPS history service
-                        console.log('[DevDashboard] 🗑️ Step 2: Clearing GPS history service...');
                         await gpsHistoryService.clearHistory();
-                        console.log('[DevDashboard] ✅ GPS history service cleared');
                         
                         // Step 2: Clear ALL related AsyncStorage keys
-                        console.log('[DevDashboard] 🗑️ Step 3: Clearing ALL AsyncStorage keys...');
                         await AsyncStorage.removeItem('solefood-session-storage'); // Zustand persist (包含 exploredHexes)
                         await AsyncStorage.removeItem('gps_history'); // GPS history points
                         await AsyncStorage.removeItem('gps_sessions'); // GPS sessions (historySessions)
                         await AsyncStorage.removeItem('explored_hexes'); // Legacy explored hexes (如果存在)
                         await AsyncStorage.removeItem('@solefood/current-session-hexes'); // 當前會話臨時數據
-                        console.log('[DevDashboard] ✅ All AsyncStorage keys cleared');
                         
                         // Step 3: Wait for AsyncStorage operations to complete
                         await new Promise(resolve => setTimeout(resolve, 500));
                         
                         // Step 4: Verify clear was successful
-                        console.log('[DevDashboard] 🗑️ Step 4: Verifying clear...');
                         const verifyHistory = await AsyncStorage.getItem('gps_history');
                         const verifySessions = await AsyncStorage.getItem('gps_sessions');
                         const verifyPersist = await AsyncStorage.getItem('solefood-session-storage');
                         const verifyCurrentSession = await AsyncStorage.getItem('@solefood/current-session-hexes');
-                        console.log('[DevDashboard] Verification:', {
-                          history: verifyHistory ? 'STILL EXISTS!' : 'cleared ✅',
-                          sessions: verifySessions ? 'STILL EXISTS!' : 'cleared ✅',
-                          persist: verifyPersist ? 'STILL EXISTS!' : 'cleared ✅',
-                          currentSession: verifyCurrentSession ? 'STILL EXISTS!' : 'cleared ✅'
-                        });
                         
                         // Step 5: Clear session store state (內存中的 exploredHexes 和 currentSessionNewHexes)
-                        console.log('[DevDashboard] 🗑️ Step 5: Clearing session store state...');
                         const store = useSessionStore.getState();
                         useSessionStore.setState({ 
                           exploredHexes: new Set<string>(), // ✅ 清除 exploredHexes = "去過哪裡"（H3 渲染）
@@ -858,26 +818,13 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                         
                         // 驗證清除
                         const afterClear = useSessionStore.getState();
-                        console.log('[DevDashboard] ✅ Session store state cleared:', {
-                          exploredHexesBefore: store.exploredHexes.size,
-                          exploredHexesAfter: afterClear.exploredHexes.size,
-                          currentSessionHexesBefore: store.currentSessionNewHexes.size,
-                          currentSessionHexesAfter: afterClear.currentSessionNewHexes.size,
-                        });
                         
                         // 驗證 GPS history service
                         const allSessions = gpsHistoryService.getAllSessions();
-                        console.log('[DevDashboard] ✅ GPS history service state:', {
-                          sessionsCount: allSessions.length, // ✅ historySessions = "怎麼去的"（軌跡查看）
-                          historyPointsCount: gpsHistoryService.getHistoryCount(),
-                          isActive: gpsHistoryService.isSessionActive(),
-                        });
                         
                         // Step 6: Wait before reload
                         await new Promise(resolve => setTimeout(resolve, 500));
                         
-                        console.log('[DevDashboard] ✅ All clear operations completed successfully!');
-                        console.log('[DevDashboard] 🔄 Auto-reloading app in 1 second...');
                         
                         // Wait a bit more before reload to ensure all async operations complete
                         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -885,7 +832,6 @@ export const DevDashboard: React.FC<DevDashboardProps> = ({
                         // Auto reload the app
                         DevSettings.reload();
                       } catch (error) {
-                        console.error('[DevDashboard] ❌ Error during clear operation:', error);
                         Alert.alert('❌ 錯誤', `清除失敗: ${error}`);
                       }
                     },

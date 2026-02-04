@@ -29,7 +29,6 @@ export default function RootLayout() {
       (global as any).ErrorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.includes(KEEP_AWAKE_ERROR)) {
-          console.warn('[Solefood] Keep awake 在此裝置上無法啟用，已忽略:', msg);
           return;
         }
         orig(error, isFatal);
@@ -39,7 +38,6 @@ export default function RootLayout() {
       const reason = event?.reason ?? event;
       const msg = reason instanceof Error ? reason.message : String(reason);
       if (msg.includes(KEEP_AWAKE_ERROR)) {
-        console.warn('[Solefood] Keep awake 在此裝置上無法啟用，已忽略:', msg);
         if (typeof (event as PromiseRejectionEvent).preventDefault === 'function') {
           (event as PromiseRejectionEvent).preventDefault();
         }

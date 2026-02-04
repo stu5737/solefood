@@ -3,6 +3,7 @@
   "version": "8.7.0",
   "main": "expo-router/entry",
   "scripts": {
+    "postinstall": "node -e \"require('fs').writeFileSync('.node_path', require('child_process').execSync('which node').toString().trim())\" && node scripts/patch-agp.js",
     "start": "expo start",
     "start:dev": "expo start --dev-client",
     "android": "./run-android.sh",

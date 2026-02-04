@@ -363,12 +363,9 @@ const restoreCurrentSessionHexes = async () => {
         currentSessionNewHexes: hexSet 
       });
       
-      console.log('[SessionStore] ✅ Restored currentSessionNewHexes from AsyncStorage:', hexSet.size, 'hexes');
     } else {
-      console.log('[SessionStore] No persisted currentSessionNewHexes found');
     }
   } catch (error) {
-    console.warn('[SessionStore] ⚠️  Failed to restore currentSessionNewHexes:', error);
   }
 };
 
@@ -419,13 +416,6 @@ export const useSessionStore = create<SessionStore>()(
     // 檢查深層領域
     get().checkDeepZone();
     
-    console.log('[SessionStore] Distance added', {
-      added: km,
-      total: get().totalDistance,
-      session: get().sessionDistance,
-      daily: get().dailyDistance,
-      value: get().estimatedValue,
-    });
   },
   
   /**
@@ -470,7 +460,6 @@ export const useSessionStore = create<SessionStore>()(
         },
       });
       
-      console.log('[SessionStore] Deep Zone activated! T3 drop rate doubled.');
     }
   },
   
@@ -481,7 +470,6 @@ export const useSessionStore = create<SessionStore>()(
    */
   setLoginDays: (days: number) => {
     if (days < 0) {
-      console.warn('[SessionStore] Login days cannot be negative');
       return;
     }
     
@@ -504,11 +492,6 @@ export const useSessionStore = create<SessionStore>()(
       },
     }));
     
-    console.log('[SessionStore] Login days set', {
-      streak: days,
-      t2Bonus,
-      currentT2Chance,
-    });
   },
   
   /**
@@ -583,11 +566,6 @@ export const useSessionStore = create<SessionStore>()(
         };
       });
       
-      console.log('[SessionStore] Entered decay mode', {
-        missedDays,
-        consecutiveMissedDays,
-        currentT2Chance: get().luckGradient.currentT2Chance,
-      });
       
       return {
         needsRescue: false,
@@ -619,19 +597,16 @@ export const useSessionStore = create<SessionStore>()(
     
     // 檢查是否可以使用救援
     if (state.luckGradient.leaveDaysUsed >= 3) {
-      console.warn('[SessionStore] Leave rescue limit reached');
       return false;
     }
     
     if (state.luckGradient.consecutiveMissedDays > 3) {
-      console.warn('[SessionStore] Cannot rescue: exceeded buffer period');
       return false;
     }
     
     // 檢查廣告上限
     const canWatchAd = get().triggerRescue('revival');
     if (!canWatchAd) {
-      console.warn('[SessionStore] Ad cap reached for leave rescue');
       return false;
     }
     
@@ -646,10 +621,6 @@ export const useSessionStore = create<SessionStore>()(
       },
     }));
     
-    console.log('[SessionStore] Leave rescue used', {
-      leaveDaysUsed: get().luckGradient.leaveDaysUsed,
-      streak: get().luckGradient.streak,
-    });
     
     return true;
   },
@@ -699,11 +670,6 @@ export const useSessionStore = create<SessionStore>()(
       },
     }));
     
-    console.log('[SessionStore] Login processed', {
-      streak: newStreak,
-      t2Bonus,
-      currentT2Chance,
-    });
   },
   
   /**
@@ -743,10 +709,6 @@ export const useSessionStore = create<SessionStore>()(
         },
       });
       
-      console.log('[SessionStore] Streak updated', {
-        streak: newStreak,
-        t2Bonus,
-      });
     }
   },
   
@@ -791,17 +753,11 @@ export const useSessionStore = create<SessionStore>()(
           },
         }));
         
-        console.log('[SessionStore] Applied daily decay', {
-          daysSinceDecay,
-          decayAmount,
-          currentT2Chance,
-        });
       }
       
       // 更新簽到狀態
       get().updateStreak();
       
-      console.log('[SessionStore] Daily data reset');
     }
   },
   
@@ -813,7 +769,6 @@ export const useSessionStore = create<SessionStore>()(
   toggleTempExpansion: () => {
     set((state) => {
       const newState = !state.isTempExpanded;
-      console.log('[SessionStore] Temp expansion toggled', { isTempExpanded: newState });
       return {
         isTempExpanded: newState,
       };
@@ -829,7 +784,6 @@ export const useSessionStore = create<SessionStore>()(
     set({
       isTempExpanded: expanded,
     });
-    console.log('[SessionStore] Temp expansion set', { isTempExpanded: expanded });
   },
 
   /**
@@ -849,11 +803,6 @@ export const useSessionStore = create<SessionStore>()(
     
     // 檢查是否超過上限
     if (adCap.used >= adCap.cap) {
-      console.warn('[SessionStore] Rescue ad cap reached', {
-        type,
-        used: adCap.used,
-        cap: adCap.cap,
-      });
       return false;
     }
     
@@ -868,11 +817,6 @@ export const useSessionStore = create<SessionStore>()(
       },
     }));
     
-    console.log('[SessionStore] Rescue ad triggered', {
-      type,
-      used: get().adCaps[type].used,
-      cap: get().adCaps[type].cap,
-    });
     
     return true;
   },
@@ -888,7 +832,6 @@ export const useSessionStore = create<SessionStore>()(
       estimatedValue: 0,
     });
     
-    console.log('[SessionStore] Session reset');
   },
   
   /**
@@ -903,10 +846,6 @@ export const useSessionStore = create<SessionStore>()(
     set((state) => {
       const newDebt = state.pendingHygieneDebt + amount;
       
-      console.log('[SessionStore] Hygiene debt added', {
-        added: amount,
-        totalDebt: newDebt,
-      });
       
       return {
         pendingHygieneDebt: newDebt,
@@ -924,7 +863,6 @@ export const useSessionStore = create<SessionStore>()(
       pendingHygieneDebt: 0,
     });
     
-    console.log('[SessionStore] Hygiene debt reset');
   },
   
   /**
@@ -940,10 +878,6 @@ export const useSessionStore = create<SessionStore>()(
     set((state) => {
       const newDebt = state.pendingDurabilityDebt + amount;
       
-      console.log('[SessionStore] Durability debt added', {
-        added: amount,
-        totalDebt: newDebt,
-      });
       
       return {
         pendingDurabilityDebt: newDebt,
@@ -961,7 +895,6 @@ export const useSessionStore = create<SessionStore>()(
       pendingDurabilityDebt: 0,
     });
     
-    console.log('[SessionStore] Durability debt reset');
   },
   
   /**
@@ -983,7 +916,6 @@ export const useSessionStore = create<SessionStore>()(
       currentEncounter: encounter,
     });
     
-    console.log(`[SessionStore] Pending encounter saved: T${item.tier} item (${item.id})`);
   },
   
   /**
@@ -997,7 +929,6 @@ export const useSessionStore = create<SessionStore>()(
       currentEncounter: null,
     });
     
-    console.log('[SessionStore] Pending encounter cleared');
   },
   
   /**
@@ -1007,7 +938,6 @@ export const useSessionStore = create<SessionStore>()(
    */
   setMapMode: (mode: 'GAME' | 'HISTORY') => {
     set({ mapMode: mode });
-    console.log('[SessionStore] Map mode set to', mode);
   },
   
   /**
@@ -1032,7 +962,10 @@ export const useSessionStore = create<SessionStore>()(
       t2DropRateBonus: number;
     };
   } => {
+    console.log('[🔍 SessionStore] discoverNewHex 被調用', { hexIndex });
+
     if (!hexIndex) {
+      console.warn('[⚠️ SessionStore] hexIndex 為空，返回');
       return {
         hasNewDiscovery: false,
         isGrayZone: false,
@@ -1044,8 +977,15 @@ export const useSessionStore = create<SessionStore>()(
     const state = get();
     const { lastKnownHex, exploredHexes, currentSessionNewHexes } = state;
     
+    console.log('[📊 SessionStore] 當前狀態', {
+      lastKnownHex,
+      exploredHexesSize: exploredHexes.size,
+      currentSessionNewHexesSize: currentSessionNewHexes.size,
+    });
+
     // ⚡️ 如果是同一個格子，直接跳過（效能優化）
     if (hexIndex === lastKnownHex) {
+      console.log('[⏭️ SessionStore] 相同的格子，跳過');
       return {
         hasNewDiscovery: false,
         isGrayZone: false,
@@ -1092,51 +1032,19 @@ export const useSessionStore = create<SessionStore>()(
                 hasNewDiscoveries = true;
                 explorationDetails.newHexes.push(cell);
                 
-                console.log('🆕 [開拓者] 發現未探索區域！', {
-                  h3Index: cell.substring(0, 10) + '...',
-                  類型: '🌫️ Gray Zone',
-                  獎勵: '✨ T2 掉落率 +10%',
-                  action: '顯示綠色方框'
-                });
               } else if (isHistorical) {
                 // ⏪ 走到歷史 H3
                 explorationDetails.historicalHexes.push(cell);
                 
-                console.log('🔄 [重訪] 已探索區域', {
-                  h3Index: cell.substring(0, 10) + '...',
-                  類型: '📍 Explored',
-                  獎勵: '無加成',
-                  action: '不顯示方框'
-                });
               } else {
                 // 🔁 當前會話已經走過
                 explorationDetails.currentHexes.push(cell);
                 
-                console.log('🔁 [當前] 會話內移動', {
-                  h3Index: cell.substring(0, 10) + '...',
-                  類型: '🔁 Current',
-                  獎勵: '無加成',
-                  action: '不重複顯示'
-                });
               }
             });
             
-            console.log('[SessionStore] 🎯 開拓者判定總結:', {
-              from: lastKnownHex.substring(0, 10) + '...',
-              to: hexIndex.substring(0, 10) + '...',
-              pathLength: pathCells.length,
-              新探索: explorationDetails.newHexes.length,
-              歷史區域: explorationDetails.historicalHexes.length,
-              當前會話: explorationDetails.currentHexes.length,
-              開拓者紅利: hasNewDiscoveries ? '✅ 啟動' : '❌ 未啟動'
-            });
           } else {
             // ⭐⭐⭐ 距離太遠，跳過插值（GPS 跳動或漂移）
-            console.warn(`[SessionStore] ⚠️ Skipped interpolation in discoverNewHex: ${pathCells.length} cells (too far, possible GPS jump)`, {
-              from: lastKnownHex.substring(0, 10) + '...',
-              to: hexIndex.substring(0, 10) + '...',
-              maxAllowed: MAX_INTERPOLATION_CELLS,
-            });
             
             // 只加入當前格子，不做插值
             const isHistorical = exploredHexes.has(hexIndex);
@@ -1147,10 +1055,6 @@ export const useSessionStore = create<SessionStore>()(
               hasNewDiscoveries = true;
               explorationDetails.newHexes.push(hexIndex);
               
-              console.log('🆕 [開拓者] 發現未探索區域！(跳過插值)', {
-                h3Index: hexIndex.substring(0, 10) + '...',
-                原因: 'GPS 跳動，距離過遠'
-              });
             } else if (isHistorical) {
               explorationDetails.historicalHexes.push(hexIndex);
             } else {
@@ -1159,7 +1063,6 @@ export const useSessionStore = create<SessionStore>()(
           }
         } else {
           // 降級方案：直接加入當前格子
-          console.log('[SessionStore] gridPathCells not available, using fallback');
           
           const isHistorical = exploredHexes.has(hexIndex);
           const isCurrentSession = currentSessionNewHexes.has(hexIndex);
@@ -1169,20 +1072,14 @@ export const useSessionStore = create<SessionStore>()(
             hasNewDiscoveries = true;
             explorationDetails.newHexes.push(hexIndex);
             
-            console.log('🆕 [開拓者] 發現未探索區域！(降級模式)', {
-              h3Index: hexIndex.substring(0, 10) + '...',
-              獎勵: '✨ T2 掉落率 +10%'
-            });
           } else if (isHistorical) {
             explorationDetails.historicalHexes.push(hexIndex);
-            console.log('🔄 [重訪] 已探索區域 (降級模式)');
           } else {
             explorationDetails.currentHexes.push(hexIndex);
           }
         }
       } catch (error) {
         // 距離太遠（瞬移）或計算失敗，只加當前點
-        console.warn('[SessionStore] Grid path calculation failed, using current hex only:', error);
         
         const isHistorical = exploredHexes.has(hexIndex);
         const isCurrentSession = currentSessionNewHexes.has(hexIndex);
@@ -1192,10 +1089,6 @@ export const useSessionStore = create<SessionStore>()(
           hasNewDiscoveries = true;
           explorationDetails.newHexes.push(hexIndex);
           
-          console.log('🆕 [開拓者] 發現未探索區域！(錯誤恢復)', {
-            h3Index: hexIndex.substring(0, 10) + '...',
-            獎勵: '✨ T2 掉落率 +10%'
-          });
         } else if (isHistorical) {
           explorationDetails.historicalHexes.push(hexIndex);
         } else {
@@ -1209,27 +1102,15 @@ export const useSessionStore = create<SessionStore>()(
         hasNewDiscoveries = true;
         explorationDetails.newHexes.push(hexIndex);
         
-        console.log('🆕 [開拓者] 首次探索！', {
-          h3Index: hexIndex.substring(0, 10) + '...',
-          類型: '🎯 起點',
-          獎勵: '✨ T2 掉落率 +10%'
-        });
       }
     }
     
     // 只有真的有新格子才更新 State（減少渲染）
     if (hasNewDiscoveries) {
-      // ✅ 診斷 Log 5：狀態更新前後
-      console.log('🔍 [診斷] discoverNewHex 狀態更新', {
-        更新前: {
-          currentSessionSize: currentSessionNewHexes.size,
-          exploredHexesSize: exploredHexes.size,
-        },
-        更新後: {
-          currentSessionSize: newCurrentSessionHexes.size,
-          新增數量: explorationDetails.newHexes.length,
-          新增H3: explorationDetails.newHexes.map(h => h.substring(0, 10) + '...'),
-        },
+      console.log('[✅ SessionStore] 發現新格子，準備更新狀態', {
+        newHexesCount: explorationDetails.newHexes.length,
+        beforeSize: currentSessionNewHexes.size,
+        afterSize: newCurrentSessionHexes.size,
       });
       
       set({ 
@@ -1237,18 +1118,18 @@ export const useSessionStore = create<SessionStore>()(
         lastKnownHex: hexIndex // ⚡️ 更新最後位置
       });
       
+      console.log('[💾 SessionStore] 狀態已更新，即將持久化');
+      
       // ⭐ 即時驗證：檢查剛添加的 H3 是否正確存在於集合中
       for (const newHex of explorationDetails.newHexes) {
         const inCurrentSession = newCurrentSessionHexes.has(newHex);
         const inExploredHexes = exploredHexes.has(newHex);
         const isExplored = inExploredHexes || inCurrentSession;
-        
-        console.log('✅ [即時驗證] 新添加的 H3 狀態', {
-          h3Index: newHex.substring(0, 12) + '...',
-          在本次會話: inCurrentSession ? '✅' : '❌',
-          在歷史記錄: inExploredHexes ? '✅' : '❌',
-          Zone判定: isExplored ? '🟢 Explored' : '🌫️ Gray Zone',
-          預期結果: '在本次會話: ✅, Zone判定: 🟢 Explored',
+        console.log('[🔎 SessionStore] H3 驗證', {
+          hex: newHex,
+          inCurrentSession,
+          inExploredHexes,
+          isExplored,
         });
       }
       
@@ -1256,10 +1137,15 @@ export const useSessionStore = create<SessionStore>()(
       AsyncStorage.setItem(
         CURRENT_SESSION_HEXES_KEY,
         JSON.stringify(Array.from(newCurrentSessionHexes))
-      ).catch(err => {
-        console.warn('[SessionStore] ⚠️  Failed to persist current session hexes:', err);
+      ).then(() => {
+        console.log('[💾 SessionStore] AsyncStorage 持久化成功', {
+          hexesCount: newCurrentSessionHexes.size,
+        });
+      }).catch(err => {
+        console.error('[❌ SessionStore] AsyncStorage 持久化失敗', err);
       });
     } else {
+      console.log('[⏭️ SessionStore] 沒有新格子，只更新最後位置');
       // 即使沒新格子，也要更新最後位置，以便下次計算
       set({ lastKnownHex: hexIndex });
     }
@@ -1270,11 +1156,6 @@ export const useSessionStore = create<SessionStore>()(
       t2DropRateBonus: hasNewDiscoveries ? 10 : 0  // +10% T2 掉落率
     };
     
-    console.log('🎁 [開拓者紅利]', {
-      狀態: pathfinderBonus.active ? '✅ 啟動' : '❌ 未啟動',
-      T2加成: `+${pathfinderBonus.t2DropRateBonus}%`,
-      新探索數量: explorationDetails.newHexes.length
-    });
     
     return {
       hasNewDiscovery: hasNewDiscoveries,
@@ -1301,17 +1182,12 @@ export const useSessionStore = create<SessionStore>()(
       
       // ⭐ 修復 1：確保 gpsHistoryService 已初始化
       if (!gpsHistoryService.initialized) {
-        console.log('[SessionStore] ⚠️  GPSHistoryService not initialized, initializing...');
         await gpsHistoryService.initialize();
       }
       
       const state = get();
       const existingHexes = new Set<string>(state.exploredHexes);
       
-      console.log('[SessionStore] 📊 Loaded from persist storage:', {
-        persistedHexesCount: state.exploredHexes.size,
-        mergedCount: existingHexes.size,
-      });
       
       // 首先檢查並遷移舊的 Res 10 數據到 Res 11
       const oldHexes = Array.from(existingHexes);
@@ -1329,7 +1205,6 @@ export const useSessionStore = create<SessionStore>()(
         
         if (res10Hexes.length > 0) {
           const { getH3CellChildren } = require('../core/math/h3');
-          console.log(`[SessionStore] Migrating ${res10Hexes.length} Res 10 hexes to Res 11...`);
           const migratedHexes = new Set<string>(existingHexes);
           
           for (const res10Hex of res10Hexes) {
@@ -1342,7 +1217,6 @@ export const useSessionStore = create<SessionStore>()(
           
           existingHexes.clear();
           migratedHexes.forEach(hex => existingHexes.add(hex));
-          console.log(`[SessionStore] Migration complete. New hex count: ${existingHexes.size}`);
         }
       }
       
@@ -1366,12 +1240,6 @@ export const useSessionStore = create<SessionStore>()(
       // ⭐⭐⭐ 方案 B：限制插值距離（約 100-200 米）
       const MAX_INTERPOLATION_CELLS = 20;
       
-      console.log('[SessionStore] 🔄 Processing sessions with controlled interpolation (方案 B+C):', {
-        totalSessions: allSessions.length,
-        currentSessionId: currentSessionId ? currentSessionId.substring(0, 20) + '...' : 'none',
-        hasGridPathCells,
-        maxInterpolationCells: MAX_INTERPOLATION_CELLS,
-      });
       
       for (const session of allSessions) {
         // 排除當前會話
@@ -1424,7 +1292,6 @@ export const useSessionStore = create<SessionStore>()(
                   totalSuccessCount++;
                 } else {
                   // 距離太遠，跳過插值（可能是 GPS 跳動或長時間暫停）
-                  console.warn(`[SessionStore] ⚠️ Skipped interpolation: ${pathCells.length} cells (too far, session: ${session.sessionId.substring(0, 20)})`);
                   hexSet.add(currentHex);
                   totalSuccessCount++;
                   sessionSkippedCount++;
@@ -1442,7 +1309,6 @@ export const useSessionStore = create<SessionStore>()(
             
             lastHex = currentHex;
           } catch (error) {
-            console.warn('[SessionStore] Failed to convert point to H3:', error);
           }
         }
         
@@ -1457,12 +1323,6 @@ export const useSessionStore = create<SessionStore>()(
           sessionsSkippedTooFar++;
         }
         
-        console.log(`[SessionStore] ✅ Processed session ${sessionsProcessed}/${allSessions.length}:`, {
-          sessionId: session.sessionId.substring(0, 20) + '...',
-          points: sessionPointsCount,
-          interpolated: sessionInterpolatedCount,
-          skipped: sessionSkippedCount,
-        });
       }
       
       // 更新 store
@@ -1471,21 +1331,7 @@ export const useSessionStore = create<SessionStore>()(
       // 強制觸發 persist 保存
       useSessionStore.setState({ exploredHexes: hexSet });
       
-      console.log('[SessionStore] ✅ updateExploredHexesFromHistory completed (方案 B+C):', {
-        totalSessions: allSessions.length,
-        sessionsProcessed,
-        sessionsSkippedTooFar,
-        totalPoints: totalPointsProcessed,
-        totalSuccessCount,
-        totalInterpolatedCount,
-        exploredHexesCount: hexSet.size,
-        persistedHexesCount: state.exploredHexes.size,
-        addedHexes: hexSet.size - state.exploredHexes.size,
-        pathInterpolationEnabled: hasGridPathCells,
-        maxInterpolationCells: MAX_INTERPOLATION_CELLS,
-      });
     } catch (error) {
-      console.error('[SessionStore] ❌ updateExploredHexesFromHistory failed:', error);
     }
   },
   
@@ -1497,14 +1343,11 @@ export const useSessionStore = create<SessionStore>()(
     const newHexesCount = state.currentSessionNewHexes.size;
     
     if (newHexesCount === 0) {
-      console.log('[SessionStore] No new hexes to merge');
       
       // ⭐ 即使沒有新 H3，也要清除持久化數據（清理垃圾數據）
       try {
         await AsyncStorage.removeItem(CURRENT_SESSION_HEXES_KEY);
-        console.log('[SessionStore] ✅ Cleared persisted current session hexes (no new hexes)');
       } catch (error) {
-        console.warn('[SessionStore] ⚠️  Failed to clear persisted hexes:', error);
       }
       
       return;
@@ -1515,7 +1358,6 @@ export const useSessionStore = create<SessionStore>()(
     state.currentSessionNewHexes.forEach(hex => mergedHexes.add(hex));
     const afterSize = mergedHexes.size;
     
-    console.log(`[SessionStore] 🔄 Merging ${newHexesCount} hexes. Before: ${beforeSize}, After: ${afterSize}, Actually added: ${afterSize - beforeSize}`);
     
     // ⭐ 單次原子更新，避免中間狀態
     set({ 
@@ -1527,15 +1369,12 @@ export const useSessionStore = create<SessionStore>()(
     // ⭐ 清除 AsyncStorage 中的臨時持久化數據
     try {
       await AsyncStorage.removeItem(CURRENT_SESSION_HEXES_KEY);
-      console.log('[SessionStore] ✅ Cleared persisted current session hexes');
     } catch (error) {
-      console.warn('[SessionStore] ⚠️  Failed to clear persisted hexes:', error);
     }
     
     // ⭐ 短暫延遲確保 React 完成更新
     await new Promise(resolve => setTimeout(resolve, 50));
     
-    console.log(`[SessionStore] ✅ Merge completed. Total explored: ${mergedHexes.size}`);
   },
   
   /**
@@ -1544,7 +1383,6 @@ export const useSessionStore = create<SessionStore>()(
   clearCurrentSessionHexes: () => {
     const state = get();
     if (state.currentSessionNewHexes.size > 0) {
-      console.log('[SessionStore] Clearing', state.currentSessionNewHexes.size, 'current session new hexes');
       set({ currentSessionNewHexes: new Set<string>() });
     }
   },
@@ -1566,23 +1404,14 @@ export const useSessionStore = create<SessionStore>()(
       
       set({ exploredHexes: newHexes });
       
-      console.log('[SessionStore] 🧪 測試：隨機刪除 H3 索引', {
-        原始數量: originalSize,
-        刪除數量: originalSize - keepCount,
-        保留數量: keepCount,
-        當前數量: newHexes.size,
-      });
     } else {
-      console.log('[SessionStore] 🧪 No H3 history to delete');
     }
     
     // 2. 刪除 GPS 會話（需要動態導入避免循環依賴）
     try {
       const { gpsHistoryService } = await import('../services/gpsHistory');
       const result = await gpsHistoryService.testRandomDeleteHalfSessions();
-      console.log('[SessionStore] 🧪 測試：隨機刪除 GPS 會話', result);
     } catch (error) {
-      console.error('[SessionStore] ❌ Failed to delete GPS sessions:', error);
     }
   },
     }),
@@ -1616,9 +1445,6 @@ export const useSessionStore = create<SessionStore>()(
       
       // ⭐ 新增：監聽 hydration 完成
       onRehydrateStorage: () => (state) => {
-        console.log('[SessionStore] ✅ Hydration completed', {
-          exploredHexesCount: state?.exploredHexes.size || 0,
-        });
         
         // ⭐ Hydration 完成後，立即恢復 currentSessionNewHexes
         restoreCurrentSessionHexes();

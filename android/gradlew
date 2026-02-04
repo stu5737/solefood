@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Hack to ensure node is in PATH for Android Studio / Gradle
+export PATH="$PATH:/Users/yumingliao/.nvm/versions/node/v20.19.6/bin"
+
 #
 # Copyright © 2015-2021 the original authors.
 #
